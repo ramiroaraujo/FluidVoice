@@ -19,6 +19,8 @@ final class LiveEditSession: ObservableObject {
     private(set) var sendRequested = false
     /// Stops the dictation the way the hotkey does. Set by ContentView.
     var onStopRequested: (() -> Void)?
+    /// Files behind the `[image N]` placeholders pasted into the editor; N is the index plus one.
+    private(set) var imagePaths: [String] = []
 
     var hasEdits: Bool { self.text != self.recognizedText }
 
@@ -40,6 +42,12 @@ final class LiveEditSession: ObservableObject {
 
     func userEdited(_ text: String) {
         self.text = text
+    }
+
+    /// Registers a pasted image file and returns the placeholder the editor shows for it.
+    func placeholder(forImageAt path: String) -> String {
+        self.imagePaths.append(path)
+        return "[image \(self.imagePaths.count)]"
     }
 
     func open(caret: Int? = nil) {
@@ -65,12 +73,21 @@ final class LiveEditSession: ObservableObject {
         }
     }
 
-    /// Merges the final transcript under the hand edits and ends the session.
-    func finish(finalTranscript: String) -> String {
+    /// Merges the final transcript under the hand edits, swaps image placeholders for their file paths,
+    /// and ends the session. Returns the paths the text contains.
+    func finish(finalTranscript: String) -> (text: String, imagePaths: [String]) {
         defer { self.reset() }
-        guard self.hasEdits else { return finalTranscript }
+        guard self.hasEdits else { return (finalTranscript, []) }
         DebugLogger.shared.info("Live Edit merged hand edits into the final transcript", source: "LiveEdit")
-        return LiveEditMerge.merge(base: self.recognizedText, edited: self.text, recognized: finalTranscript)
+        var text = LiveEditMerge.merge(base: self.recognizedText, edited: self.text, recognized: finalTranscript)
+        var usedPaths: [String] = []
+        for (index, path) in self.imagePaths.enumerated() {
+            let placeholder = "[image \(index + 1)]"
+            guard text.contains(placeholder) else { continue }
+            text = text.replacingOccurrences(of: placeholder, with: path)
+            usedPaths.append(path)
+        }
+        return (text, usedPaths)
     }
 
     private func reset() {
@@ -79,5 +96,6 @@ final class LiveEditSession: ObservableObject {
         self.recognizedText = ""
         self.openingCaret = nil
         self.sendRequested = false
+        self.imagePaths = []
     }
 }

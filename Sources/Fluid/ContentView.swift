@@ -2854,7 +2854,8 @@ struct ContentView: View {
         streamHandler: PrivateAIStreamHandler? = nil,
         benchmarkID: String? = nil,
         stopSnapshot: DictationStopSnapshot? = nil,
-        allowsOfflineFallback: Bool = false
+        allowsOfflineFallback: Bool = false,
+        protectedPaths: [String] = []
     ) async throws -> AITextProcessingResult {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             throw MeetingModelResidencyError.busy
@@ -2962,11 +2963,15 @@ struct ContentView: View {
 
         // Resolve the effective prompt once so every provider path honors
         // transient overrides such as "Transcribe with Prompt".
-        let promptText: String = {
+        let resolvedPromptText: String = {
             if let stopSnapshot { return stopSnapshot.systemPrompt }
             if let overrideSystemPrompt { return overrideSystemPrompt }
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
+        // Images pasted in Live Edit arrive as file paths the target app reads; they must pass through untouched.
+        let promptText = protectedPaths.isEmpty ? resolvedPromptText : resolvedPromptText + "\n\n" +
+            "The transcript contains these image file paths: \(protectedPaths.joined(separator: ", ")). " +
+            "Keep each one exactly as written, character for character, where it appears. Never edit, shorten, or remove them."
 
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
@@ -3249,7 +3254,8 @@ struct ContentView: View {
             onFinalTranscriptionStarted: stopOverlay.onFinalTranscriptionStarted
         )
         // Hand edits made in Live Edit win over the final pass's version of the same words.
-        let transcribedText = LiveEditSession.shared.finish(finalTranscript: finalTranscript)
+        let liveEdit = LiveEditSession.shared.finish(finalTranscript: finalTranscript)
+        let transcribedText = liveEdit.text
         self.appBench("asr_stop_return elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - asrStopStartedAt) * 1000).rounded()))")
         self.completeDictationStopSnapshot(&stopSnapshot)
         if let contextCapture, self.overlayLifecycleID == expectedOverlayLifecycleID,
@@ -3396,7 +3402,8 @@ struct ContentView: View {
                     streamHandler: streamHandler,
                     benchmarkID: pipelineID,
                     stopSnapshot: stopSnapshot,
-                    allowsOfflineFallback: true
+                    allowsOfflineFallback: true,
+                    protectedPaths: liveEdit.imagePaths
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text
