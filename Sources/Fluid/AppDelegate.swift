@@ -329,11 +329,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func openMainWindowOnLaunch() {
         self.applyDockVisibilityPolicy()
 
-        // Users can opt out of showing the window for login-item launches (#369).
+        // Users can opt out of showing the window at launch, login or manual (#369).
         // The window must still be CREATED either way - ContentView's appearance
         // bootstraps the menu bar and services - so the silent path realizes it
         // invisibly instead of skipping it.
-        let revealWindow = !self.wasLaunchedAsLoginItem || SettingsStore.shared.showMainWindowAtLoginLaunch
+        let revealWindow = SettingsStore.shared.showMainWindowAtLoginLaunch
 
         if !revealWindow {
             self.bootMainWindowHiddenWhenCreated()
@@ -399,7 +399,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     /// Realize the main window invisibly so ContentView's startup runs, then order it out.
-    /// Used for login-item launches when "Show window when launched at login" is off.
+    /// Used for every launch when "Show window at launch" is off.
     @discardableResult
     private func bootMainWindowHiddenIfPresent() -> Bool {
         guard let mainWindow = NSApp.windows.first(where: self.isMainWindow) else { return false }

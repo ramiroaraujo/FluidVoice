@@ -269,10 +269,10 @@ struct SettingsView: View {
                             .settingsSearchTarget(.launchAtStartup)
                             Divider().opacity(0.2)
 
-                            // Show window when launched at login
+                            // Show window at launch
                             self.settingsToggleRow(
-                                title: "Show window when launched at login",
-                                description: "When off, FluidVoice starts silently in the menu bar at login. Opening the app yourself always shows the window.",
+                                title: "Show window at launch",
+                                description: "When off, FluidVoice starts in the menu bar, both at login and when you open it. Open the window from the menu bar icon.",
                                 isOn: Binding(
                                     get: { SettingsStore.shared.showMainWindowAtLoginLaunch },
                                     set: { SettingsStore.shared.showMainWindowAtLoginLaunch = $0 }
