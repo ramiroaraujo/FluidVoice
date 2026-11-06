@@ -1485,10 +1485,9 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    /// Show the main window when macOS launches FluidVoice at login (default: ON, matching
-    /// current behavior). When off, login launches boot silently in the menu bar. Manual
-    /// launches always show the window. Default-true semantics so existing installs keep
-    /// their current behavior.
+    /// Show the main window when FluidVoice launches, at login or opened by hand (default: ON,
+    /// matching current behavior). When off, every launch boots silently in the menu bar.
+    /// The name and key predate manual launches; kept so existing preferences carry over.
     var showMainWindowAtLoginLaunch: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.showMainWindowAtLoginLaunch)

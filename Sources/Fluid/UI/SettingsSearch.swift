@@ -251,8 +251,8 @@ enum SettingsSearchIndex {
         ),
         .init(
             target: .showWindowAtLogin,
-            title: "Show window when launched at login",
-            terms: ["starts silently in the menu bar", "login window visibility"]
+            title: "Show window at launch",
+            terms: ["starts silently in the menu bar", "login launch window visibility hidden tray"]
         ),
         .init(
             target: .dockVisibility,
