@@ -2448,6 +2448,7 @@ struct ContentView: View {
         toggleStopRequestedAt: TimeInterval?,
         preserveTranscriptOnClipboard: Bool,
         stopSnapshot: DictationStopSnapshot? = nil,
+        waitsForModifierRelease: Bool = true,
         isOutputValid: @escaping @MainActor () -> Bool = { true }
     ) async -> TypingService.DeliveryOutcome {
         let sendsExistingDraft = outputPlan.plainText.isEmpty
@@ -2457,6 +2458,7 @@ struct ContentView: View {
             textReadyAt: textReadyAt,
             toggleStopRequestedAt: toggleStopRequestedAt,
             postInsertionKey: self.settings.spokenSendKey,
+            waitsForModifierRelease: waitsForModifierRelease,
             requiredFocusTarget: stopSnapshot == nil ? self.recordingFocusTarget : stopSnapshot?.focusTarget,
             preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
             isOutputValid: isOutputValid
@@ -3517,7 +3519,8 @@ struct ContentView: View {
         if shouldTypeExternally {
             let typingTarget = stopSnapshot.map { (pid: $0.target?.pid, shouldRestoreOriginalFocus: true) }
                 ?? self.resolveTypingTargetPID(returnToStartingField: self.settings.returnDictationToStartingField)
-            let spokenSendRequested = spokenSendParse.shouldSend
+            let holdToSendRequested = self.settings.holdToSendModifier?.isHeld == true
+            let spokenSendRequested = spokenSendParse.shouldSend || holdToSendRequested
             let sendFocus = stopSnapshot == nil ? self.recordingFocusTarget : stopSnapshot?.focusTarget
             let targetMatchesRecordingFocus = typingTarget.pid != nil
                 && typingTarget.pid == sendFocus?.pid
@@ -3526,7 +3529,8 @@ struct ContentView: View {
                 && (sendsExistingDraft || !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 && targetMatchesRecordingFocus
                 && (typingTarget.shouldRestoreOriginalFocus || sendFocus.map { TypingService.isExactFocusTargetActive($0) } == true)
-                && !self.isSpokenSendBlockedApp(appInfo)
+                // A held key is deliberate, unlike a misheard phrase, so it may also send in terminals.
+                && (holdToSendRequested || !self.isSpokenSendBlockedApp(appInfo))
             // Dispatch insertion as soon as the destination app is ready; the
             // overlay hides asynchronously after output so it cannot delay paste.
             let focusReady = await self.prepareStoppedDictationDelivery(
@@ -3561,6 +3565,7 @@ struct ContentView: View {
                     toggleStopRequestedAt: toggleStopRequestedAt,
                     preserveTranscriptOnClipboard: shouldCopyToClipboard,
                     stopSnapshot: stopSnapshot,
+                    waitsForModifierRelease: !holdToSendRequested,
                     isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
                 )
                 self.logPipelineCompletion(
