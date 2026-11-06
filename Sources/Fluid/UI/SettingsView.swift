@@ -505,6 +505,8 @@ struct SettingsView: View {
                                             self.smartDictationShortcutRow
                                         }
                                         self.shortcutGroupDivider
+                                        self.holdToSendRow
+                                        self.shortcutGroupDivider
                                         self.shortcutGroup {
                                             self.shortcutRow(
                                                 content: .init(
@@ -2253,6 +2255,30 @@ private extension SettingsView {
             )
             .padding(.vertical, 2)
         }
+    }
+
+    private var holdToSendRow: some View {
+        HStack(alignment: .center, spacing: 20) {
+            self.shortcutLabel(
+                icon: "return",
+                color: .secondary,
+                title: "Hold to Auto-Send",
+                description: "Hold this key while dictation pastes to press \(self.settings.spokenSendKey.displayName) after it. Pick one that isn't in your dictation shortcut."
+            )
+            Spacer(minLength: 12)
+            FluidDropdownPicker("Auto-send key", selectedTitle: self.settings.holdToSendModifier?.displayName ?? "Off", selection: Binding(
+                get: { self.settings.holdToSendModifier },
+                set: { self.settings.holdToSendModifier = $0 }
+            )) {
+                Text("Off").tag(SettingsStore.HoldToSendModifier?.none)
+                ForEach(SettingsStore.HoldToSendModifier.allCases) { modifier in
+                    Text(modifier.displayName).tag(Optional(modifier))
+                }
+            }
+            .fluidDropdownStyle()
+            .frame(width: 170, alignment: .trailing)
+        }
+        .padding(.vertical, 6)
     }
 
     var isRecordingAnyShortcut: Bool {

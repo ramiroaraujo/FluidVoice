@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import Combine
 import CryptoKit
 import Foundation
@@ -6125,6 +6126,7 @@ private extension SettingsStore {
         static let spokenSendImmediatelyEnabled = "SpokenSendImmediatelyEnabled"
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
+        static let holdToSendModifier = "HoldToSendModifier"
         static let reliablePasteMigrationV1 = "TextInsertionModeMigratedToReliablePasteV1"
         static let autoUpdateCheckEnabled = UpdateKeys.autoUpdateCheckEnabled
         static let showUpdatePopups = UpdateKeys.showUpdatePopups
@@ -6294,6 +6296,60 @@ extension SettingsStore {
             case .commandEnter:
                 return .maskCommand
             }
+        }
+    }
+
+    enum HoldToSendModifier: String, CaseIterable, Identifiable {
+        case shift
+        case control
+        case option
+        case command
+        case function
+
+        var id: String {
+            self.rawValue
+        }
+
+        var displayName: String {
+            switch self {
+            case .shift:
+                return "Shift"
+            case .control:
+                return "Control"
+            case .option:
+                return "Option"
+            case .command:
+                return "Command"
+            case .function:
+                return "Fn"
+            }
+        }
+
+        /// Reads the physical keys on either side; session flags can lag behind synthesized paste events.
+        var isHeld: Bool {
+            let keyCodes: [Int]
+            switch self {
+            case .shift:
+                keyCodes = [kVK_Shift, kVK_RightShift]
+            case .control:
+                keyCodes = [kVK_Control, kVK_RightControl]
+            case .option:
+                keyCodes = [kVK_Option, kVK_RightOption]
+            case .command:
+                keyCodes = [kVK_Command, kVK_RightCommand]
+            case .function:
+                keyCodes = [kVK_Function]
+            }
+            return keyCodes.contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
+        }
+    }
+
+    /// Nil turns Hold to Auto-Send off.
+    var holdToSendModifier: HoldToSendModifier? {
+        get { self.defaults.string(forKey: Keys.holdToSendModifier).flatMap(HoldToSendModifier.init(rawValue:)) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue?.rawValue, forKey: Keys.holdToSendModifier)
         }
     }
 

@@ -632,6 +632,7 @@ final class TypingService {
         toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
+        waitsForModifierRelease: Bool = true,
         requiredFocusTarget: CapturedFocusTarget? = nil,
         preserveTranscriptOnClipboard: Bool = false,
         isOutputValid: @escaping @MainActor () -> Bool = { true },
@@ -697,7 +698,8 @@ final class TypingService {
                 return
             }
 
-            let modifiersReleased = await self.waitForPhysicalModifiersToRelease(timeout: 2)
+            // The Return event carries explicit flags, so a held hold-to-send key cannot leak into it.
+            let modifiersReleased = waitsForModifierRelease ? await self.waitForPhysicalModifiersToRelease(timeout: 2) : true
             guard isOutputValid(), Self.canDispatchPostInsertionAction(
                 preferredTargetPID: preferredTargetPID,
                 requiredTargetPID: requiredFocusTarget.pid,
