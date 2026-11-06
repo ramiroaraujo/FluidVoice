@@ -568,7 +568,9 @@ struct NotchExpandedView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var promptPresentation = DictationOverlayPresentationStore.shared
     @ObservedObject private var activeAppMonitor = ActiveAppMonitor.shared
+    @ObservedObject private var liveEdit = LiveEditSession.shared
     @Environment(\.theme) private var theme
+    @State private var isHoveringNotch = false
     @State private var isHoveringPromptChip = false
     @State private var isHoveringPromptMenu = false
     @State private var hoveredPromptMenuRowID: String?
@@ -739,6 +741,68 @@ struct NotchExpandedView: View {
 
     private var notchContentWidth: CGFloat {
         176
+    }
+
+    private var canOpenLiveEdit: Bool {
+        self.contentState.mode == .dictation && !self.contentState.isProcessing && self.hasTranscription
+    }
+
+    /// Live Edit grows the notch to about 3× today's 248 pt width, within DynamicNotchKit's panel.
+    /// The notch adds 72 pt around its content: padding, safe-area insets and corner ears.
+    private var liveEditContentWidth: CGFloat {
+        min(744, (NotchOverlayManager.shared.notchPanelWidth ?? 744) - 8) - 72
+    }
+
+    /// With the hints row, the notch ends up about 2× today's 135 pt height.
+    private static let liveEditTextHeight: CGFloat = 168
+
+    private var liveEditor: some View {
+        VStack(spacing: 6) {
+            LiveEditTextView(session: self.liveEdit)
+                .frame(height: Self.liveEditTextHeight)
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                self.liveEditHint(key: "esc", label: "close")
+                self.liveEditHint(key: "⌘↩", label: "paste")
+                if let sendModifier = self.settings.holdToSendModifier {
+                    self.liveEditHint(key: "\(sendModifier.displayName)+⌘↩", label: "send")
+                }
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func liveEditHint(key: String, label: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key)
+                .font(.fluidSystem(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
+            Text(label)
+                .font(.fluidSystem(size: 9.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    private var liveEditPill: some View {
+        Button {
+            self.liveEdit.open()
+        } label: {
+            Text("Edit")
+                .font(.fluidSystem(size: 9, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color(white: 0.17)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        // Knock out the caption text behind the pill.
+        .background(Capsule().fill(Color.black).padding(-4))
+        .help("Edit the transcript while you dictate")
+        .transition(.opacity)
     }
 
     @ViewBuilder
@@ -1177,6 +1241,8 @@ struct NotchExpandedView: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .frame(width: self.previewMaxWidth, alignment: .leading)
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            } else if self.liveEdit.isOpen {
+                self.liveEditor
             } else if self.presentationPolicy.showsStreamingPreview && self.hasTranscription && !self.contentState.isProcessing {
                 let previewText = self.visiblePreviewText
                 if !previewText.isEmpty {
@@ -1185,9 +1251,15 @@ struct NotchExpandedView: View {
                         context: self.contentState.captionContext,
                         fontSize: 10,
                         maxHeight: self.previewMaxHeight,
-                        opacity: 0.75
+                        opacity: 0.75,
+                        onClick: self.canOpenLiveEdit ? { self.liveEdit.open(caret: $0) } : nil
                     )
                     .frame(width: self.previewMaxWidth, alignment: .leading)
+                    .overlay(alignment: .bottomTrailing) {
+                        if self.canOpenLiveEdit, self.isHoveringNotch {
+                            self.liveEditPill
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .center)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
@@ -1195,11 +1267,14 @@ struct NotchExpandedView: View {
         }
         .onAppear { self.promptPresentation.start() }
         .coordinateSpace(name: Self.notchContentCoordinateSpace)
-        .frame(width: self.notchContentWidth)
+        .frame(width: self.liveEdit.isOpen ? self.liveEditContentWidth : self.notchContentWidth)
         .padding(.horizontal, 6)
         .padding(.top, 0)
         .padding(.bottom, 4)
         .background(Color.black)
+        .onHover { self.isHoveringNotch = $0 }
+        .animation(.easeOut(duration: 0.12), value: self.isHoveringNotch)
+        .animation(.snappy(duration: 0.22), value: self.liveEdit.isOpen)
     }
 }
 

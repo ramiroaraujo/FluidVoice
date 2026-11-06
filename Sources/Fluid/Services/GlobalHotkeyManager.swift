@@ -1288,7 +1288,10 @@ final class GlobalHotkeyManager: NSObject {
                self.activePrimaryShortcutPress?.keyboardKeyCode == keyCode
             { self.activePrimaryShortcutPress = nil }
             // The application owns cancellation output; fallback managers only discard capture.
-            if SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
+            // A plain Esc closes the Live Edit editor instead of cancelling.
+            let closesLiveEdit = LiveEditSession.shared.isOpen && keyCode == 53 &&
+                eventModifiers.isDisjoint(with: HotkeyShortcut.relevantModifierMask)
+            if !closesLiveEdit, SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
                 let result = self.cancelCallback?() ?? .unhandled
                 // Closing a suggestion must preserve the held shortcut and capture.
                 if result == .dismissedOverlay {
@@ -2807,7 +2810,9 @@ extension GlobalHotkeyManager {
         switch type {
         case .keyDown:
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            // Space types while the Live Edit editor is open.
             let canBegin = SettingsStore.shared.holdSpaceToMute && self.asrService.isRunningOrStarting &&
+                !LiveEditSession.shared.isOpen &&
                 !self.asrService.isDictionaryTrainingCaptureActive &&
                 (self.isDictateRecordingProvider?() ?? false) &&
                 !(self.isShortcutCaptureActiveProvider?() ?? false) &&

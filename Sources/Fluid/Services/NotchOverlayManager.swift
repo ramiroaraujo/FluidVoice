@@ -73,6 +73,16 @@ final class NotchOverlayManager {
     /// Track if bottom overlay is visible
     private(set) var isBottomOverlayVisible: Bool = false
     var isOverlayVisible: Bool { self.state == .visible }
+    /// DynamicNotchKit sizes its panel to half the screen; notch content cannot grow past it.
+    var notchPanelWidth: CGFloat? { self.notch?.windowController?.window?.frame.width }
+
+    /// A key notch panel keeps typing focus even when the frontmost app is re-activated.
+    /// Re-ordering it hands focus back to the app the user dictates into.
+    func releaseNotchKeyFocus() {
+        guard let window = self.notch?.windowController?.window, window.isKeyWindow else { return }
+        window.orderOut(nil)
+        window.orderFrontRegardless()
+    }
 
     // Callbacks for command output interaction
     var onCommandOutputDismiss: (() -> Void)?
