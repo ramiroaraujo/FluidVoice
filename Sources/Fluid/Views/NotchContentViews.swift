@@ -571,6 +571,8 @@ struct NotchExpandedView: View {
     @ObservedObject private var liveEdit = LiveEditSession.shared
     @Environment(\.theme) private var theme
     @State private var isHoveringNotch = false
+    @State private var clipboardHasImage = false
+    @State private var clipboardChangeCount = -1
     @State private var isHoveringPromptChip = false
     @State private var isHoveringPromptMenu = false
     @State private var hoveredPromptMenuRowID: String?
@@ -786,11 +788,31 @@ struct NotchExpandedView: View {
         }
     }
 
-    private var liveEditPill: some View {
-        Button {
-            self.liveEdit.open()
-        } label: {
-            Text("Edit")
+    /// Edit shows on hover; Paste image whenever the clipboard holds an image not yet pasted, with Edit to its left.
+    private var liveEditPills: some View {
+        HStack(spacing: 4) {
+            if self.isHoveringNotch {
+                self.notchPill("Edit", help: "Edit the transcript while you dictate") { self.liveEdit.open() }
+            }
+            if self.clipboardHasImage, self.clipboardChangeCount != self.liveEdit.pastedClipboardChangeCount {
+                self.notchPill("Paste image", help: "Add the copied image after the newest words") { self.liveEdit.pasteImagesAtEnd() }
+            }
+        }
+    }
+
+    /// Clipboards post no change notifications, so this polls the change count and reads types only when it moves.
+    private static let clipboardPoll = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+
+    private func checkClipboard() {
+        let pasteboard = NSPasteboard.general
+        guard self.canOpenLiveEdit, pasteboard.changeCount != self.clipboardChangeCount else { return }
+        self.clipboardChangeCount = pasteboard.changeCount
+        self.clipboardHasImage = LiveEditImagePaste.hasImage(pasteboard)
+    }
+
+    private func notchPill(_ title: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
                 .font(.fluidSystem(size: 9, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 7)
@@ -801,7 +823,7 @@ struct NotchExpandedView: View {
         .buttonStyle(.plain)
         // Knock out the caption text behind the pill.
         .background(Capsule().fill(Color.black).padding(-4))
-        .help("Edit the transcript while you dictate")
+        .help(help)
         .transition(.opacity)
     }
 
@@ -1256,8 +1278,8 @@ struct NotchExpandedView: View {
                     )
                     .frame(width: self.previewMaxWidth, alignment: .leading)
                     .overlay(alignment: .bottomTrailing) {
-                        if self.canOpenLiveEdit, self.isHoveringNotch {
-                            self.liveEditPill
+                        if self.canOpenLiveEdit {
+                            self.liveEditPills
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -1273,7 +1295,9 @@ struct NotchExpandedView: View {
         .padding(.bottom, 4)
         .background(Color.black)
         .onHover { self.isHoveringNotch = $0 }
+        .onReceive(Self.clipboardPoll) { _ in self.checkClipboard() }
         .animation(.easeOut(duration: 0.12), value: self.isHoveringNotch)
+        .animation(.easeOut(duration: 0.12), value: self.clipboardHasImage)
         .animation(.snappy(duration: 0.22), value: self.liveEdit.isOpen)
     }
 }

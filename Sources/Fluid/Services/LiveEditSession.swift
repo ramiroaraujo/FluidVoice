@@ -1,5 +1,5 @@
+import AppKit
 import Combine
-import Foundation
 
 /// Live Edit: the hand-editable copy of the live dictation transcript in the notch.
 /// Recognizer updates and hand edits are merged, so speech keeps arriving while the user edits.
@@ -21,6 +21,8 @@ final class LiveEditSession: ObservableObject {
     var onStopRequested: (() -> Void)?
     /// Files behind the `[image N]` placeholders pasted into the editor; N is the index plus one.
     private(set) var imagePaths: [String] = []
+    /// The clipboard's change count when its image was last pasted; the Paste Image button hides until it changes.
+    @Published private(set) var pastedClipboardChangeCount: Int?
 
     var hasEdits: Bool { self.text != self.recognizedText }
 
@@ -44,10 +46,29 @@ final class LiveEditSession: ObservableObject {
         self.text = text
     }
 
-    /// Registers a pasted image file and returns the placeholder the editor shows for it.
-    func placeholder(forImageAt path: String) -> String {
-        self.imagePaths.append(path)
-        return "[image \(self.imagePaths.count)]"
+    /// Saves the clipboard's images and returns the `[image N]` placeholders that stand for them,
+    /// or nil when the clipboard holds no image.
+    func clipboardImagePlaceholders() -> String? {
+        let paths: [String]?
+        do {
+            paths = try LiveEditImagePaste.paths(from: .general)
+        } catch {
+            DebugLogger.shared.error("Live Edit could not save a pasted image: \(error.localizedDescription)", source: "LiveEdit")
+            return nil
+        }
+        guard let paths else { return nil }
+        self.pastedClipboardChangeCount = NSPasteboard.general.changeCount
+        return paths.map { path in
+            self.imagePaths.append(path)
+            return "[image \(self.imagePaths.count)]"
+        }.joined(separator: " ")
+    }
+
+    /// The notch's Paste Image button: the images go after the newest words, and speech continues after them.
+    func pasteImagesAtEnd() {
+        guard let placeholders = self.clipboardImagePlaceholders() else { return }
+        self.text += (self.text.last?.isWhitespace ?? true ? "" : " ") + placeholders
+        NotchOverlayManager.shared.updateTranscriptionText(self.text)
     }
 
     func open(caret: Int? = nil) {
@@ -65,8 +86,16 @@ final class LiveEditSession: ObservableObject {
     func close(restoreFocus: Bool) {
         guard self.isOpen else { return }
         self.isOpen = false
-        NotchOverlayManager.shared.releaseNotchKeyFocus()
-        guard restoreFocus, let context = NotchContentState.shared.recordingTargetContext else { return }
+        if restoreFocus {
+            self.returnFocusToTarget()
+        } else {
+            NotchOverlayManager.shared.releaseNotchKeyFocus()
+        }
+    }
+
+    /// Hands typing focus from the notch panel back to the app being dictated into.
+    private func returnFocusToTarget() {
+        guard NotchOverlayManager.shared.releaseNotchKeyFocus(), let context = NotchContentState.shared.recordingTargetContext else { return }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 50_000_000)
             _ = await TypingService.prepareTargetForDelivery(context)
@@ -97,5 +126,6 @@ final class LiveEditSession: ObservableObject {
         self.openingCaret = nil
         self.sendRequested = false
         self.imagePaths = []
+        self.pastedClipboardChangeCount = nil
     }
 }

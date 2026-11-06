@@ -78,10 +78,13 @@ final class NotchOverlayManager {
 
     /// A key notch panel keeps typing focus even when the frontmost app is re-activated.
     /// Re-ordering it hands focus back to the app the user dictates into.
-    func releaseNotchKeyFocus() {
-        guard let window = self.notch?.windowController?.window, window.isKeyWindow else { return }
+    /// Returns whether the panel had focus to release.
+    @discardableResult
+    func releaseNotchKeyFocus() -> Bool {
+        guard let window = self.notch?.windowController?.window, window.isKeyWindow else { return false }
         window.orderOut(nil)
         window.orderFrontRegardless()
+        return true
     }
 
     // Callbacks for command output interaction
@@ -309,6 +312,9 @@ final class NotchOverlayManager {
                 return
             }
             window.alphaValue = 1
+            // Clicking the notch's buttons must leave typing in the app being dictated into;
+            // Live Edit makes the panel key itself when it opens the editor.
+            (window as? NSPanel)?.becomesKeyOnlyIfNeeded = true
             Self.overlayBench("notch_window_visible elapsedMs=\(Self.elapsedMs(since: startedAt))")
 
             await animationTask.value

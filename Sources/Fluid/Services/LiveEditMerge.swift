@@ -39,6 +39,15 @@ nonisolated enum LiveEditMerge {
                 // Both added text at the same spot: the hand edit goes first.
                 output += editedText
                 output += recognizedText
+            } else if recognizedChunk.count >= baseChunk.count,
+                      let kept = editedChunk.indices.first(where: { editedKeys[$0..<editedEnd].starts(with: baseChunk) }) {
+                // The user only added words around these, like an image pasted after the newest words:
+                // they still take the recognizer's revision, and newer speech goes after the additions.
+                let revised = recognizedStart + baseChunk.count
+                output += editedTokens[editedStart..<kept]
+                output += recognizedTokens[recognizedStart..<revised]
+                output += editedTokens[(kept + baseChunk.count)..<editedEnd]
+                output += recognizedTokens[revised..<recognizedEnd]
             } else if atEnd, recognizedChunk.count > baseChunk.count {
                 // The user fixed the newest words while more speech arrived.
                 output += editedText

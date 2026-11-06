@@ -8,20 +8,12 @@ private final class LiveEditNSTextView: NSTextView {
     /// CLI prompts take no inline images, so a pasted image shows as an `[image N]` placeholder
     /// that becomes the image file's path when the dictation stops.
     override func paste(_ sender: Any?) {
-        let paths: [String]?
-        do {
-            paths = try LiveEditImagePaste.paths(from: .general)
-        } catch {
-            DebugLogger.shared.error("Live Edit could not save a pasted image: \(error.localizedDescription)", source: "LiveEdit")
-            return
-        }
-        guard let paths else { return super.paste(sender) }
+        guard var insertion = LiveEditSession.shared.clipboardImagePlaceholders() else { return super.paste(sender) }
         let text = self.string as NSString, range = self.selectedRange()
         func isSpace(at index: Int) -> Bool {
             guard index >= 0, index < text.length, let scalar = UnicodeScalar(text.character(at: index)) else { return true }
             return CharacterSet.whitespacesAndNewlines.contains(scalar)
         }
-        var insertion = paths.map { LiveEditSession.shared.placeholder(forImageAt: $0) }.joined(separator: " ")
         if !isSpace(at: range.location - 1) { insertion = " " + insertion }
         if !isSpace(at: NSMaxRange(range)) { insertion += " " }
         self.insertText(insertion, replacementRange: range)

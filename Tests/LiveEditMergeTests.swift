@@ -26,6 +26,10 @@ enum LiveEditMergeTests {
         precondition(merged("a b c d", "a d", "a b c d e") == "a d e", "A deletion survives an append")
         precondition(merged("one two", "one\ntwo", "one two three") == "one\ntwo three", "A typed line break survives")
         precondition(merged("hello", "hello world", "") == "hello world", "Typed text survives an empty final pass")
+        precondition(merged("I am hel", "I am hel [image 1]", "I am hello there") == "I am hello [image 1] there",
+                     "An image appended after the newest words keeps their revision, and new speech follows it")
+        precondition(merged("I am hello there", "I am hello [image 1] there", "I am hello there.") == "I am hello [image 1] there.",
+                     "Words next to an inserted image still take the final pass's fix")
     }
 
     static func testEditedRanges() {

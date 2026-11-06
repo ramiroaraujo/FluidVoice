@@ -16,6 +16,7 @@ enum LiveEditImagePasteTests {
 
         board.clearContents()
         board.writeObjects([image])
+        precondition(LiveEditImagePaste.hasImage(board), "Image data counts as an image")
         let saved = try! LiveEditImagePaste.paths(from: board, folder: folder)
         precondition(saved?.count == 1, "Image data pastes as one path")
         let savedURL = URL(fileURLWithPath: saved![0])
@@ -24,14 +25,17 @@ enum LiveEditImagePasteTests {
 
         board.clearContents()
         board.writeObjects([savedURL as NSURL])
+        precondition(LiveEditImagePaste.hasImage(board), "A copied image file counts as an image")
         precondition(try! LiveEditImagePaste.paths(from: board, folder: folder) == [savedURL.path], "A copied image file pastes its own path")
 
         board.clearContents()
         board.writeObjects([image, "caption" as NSString])
+        precondition(!LiveEditImagePaste.hasImage(board), "Text copied with an image is not an image")
         precondition(try! LiveEditImagePaste.paths(from: board, folder: folder) == nil, "Text copied with an image pastes as text")
 
         board.clearContents()
         board.setString("plain text", forType: .string)
+        precondition(!LiveEditImagePaste.hasImage(board))
         precondition(try! LiveEditImagePaste.paths(from: board, folder: folder) == nil)
 
         print("PASS: image data saves as a PNG path, image files paste their path, text stays text")
