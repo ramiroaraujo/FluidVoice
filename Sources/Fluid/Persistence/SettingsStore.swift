@@ -5153,6 +5153,15 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Retry AI enhancement with Apple's on-device model when the provider is unreachable.
+    var appleOnDeviceOfflineFallbackEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.appleOnDeviceOfflineFallbackEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.appleOnDeviceOfflineFallbackEnabled)
+        }
+    }
+
     // MARK: - Media Playback Control
 
     /// When enabled, automatically pauses system media playback when transcription starts.
@@ -6203,6 +6212,7 @@ private extension SettingsStore {
         static let continuousDictationSpacingEnabled = "ContinuousDictationSpacingEnabled"
         static let contextAwareCapitalizationEnabled = "ContextAwareCapitalizationEnabled"
         static let dictationScreenContextEnabled = "DictationScreenContextEnabled"
+        static let appleOnDeviceOfflineFallbackEnabled = "AppleOnDeviceOfflineFallbackEnabled"
 
         // Custom Dictionary
         static let customDictionaryEntries = "CustomDictionaryEntries"

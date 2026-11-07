@@ -35,6 +35,18 @@ final class LLMClientRequestBodyTests: XCTestCase {
         )
     }
 
+    func testOfflineFallbackOnlyForConnectivityFailures() {
+        XCTAssertTrue(
+            DictationOfflineFallbackPolicy.isConnectivityFailure(LLMError.networkError(URLError(.notConnectedToInternet)))
+        )
+        XCTAssertTrue(DictationOfflineFallbackPolicy.isConnectivityFailure(LLMError.networkError(URLError(.timedOut))))
+        XCTAssertTrue(DictationOfflineFallbackPolicy.isConnectivityFailure(URLError(.cannotFindHost)))
+        XCTAssertFalse(DictationOfflineFallbackPolicy.isConnectivityFailure(LLMError.httpError(401, "invalid x-api-key")))
+        XCTAssertFalse(DictationOfflineFallbackPolicy.isConnectivityFailure(LLMError.httpError(429, "rate limited")))
+        XCTAssertFalse(DictationOfflineFallbackPolicy.isConnectivityFailure(LLMError.networkError(URLError(.badURL))))
+        XCTAssertFalse(DictationOfflineFallbackPolicy.isConnectivityFailure(CancellationError()))
+    }
+
     private func config(streaming: Bool) -> LLMClient.Config {
         LLMClient.Config(
             messages: [["role": "user", "content": "hello"]],
