@@ -38,6 +38,23 @@ enum LiveEditImagePasteTests {
         precondition(!LiveEditImagePaste.hasImage(board))
         precondition(try! LiveEditImagePaste.paths(from: board, folder: folder) == nil)
 
-        print("PASS: image data saves as a PNG path, image files paste their path, text stays text")
+        func link(_ text: String) -> String? {
+            board.clearContents()
+            board.setString(text, forType: .string)
+            return LiveEditImagePaste.link(from: board)
+        }
+        precondition(link(" https://example.com/a?b=1#c\n") == "https://example.com/a?b=1#c", "A copied link pastes trimmed")
+        precondition(link("mailto:me@example.com") != nil && link("slack://open?team=T1") != nil, "Any URI with a scheme is a link")
+        precondition(link("plain text") == nil && link("see https://example.com") == nil, "Text around a link is not a link")
+        precondition(link("10:30") == nil && link("example.com") == nil, "Text without a scheme is not a link")
+        board.clearContents()
+        board.declareTypes([.string, NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")], owner: nil)
+        board.setString("https://example.com", forType: .string)
+        precondition(LiveEditImagePaste.link(from: board) == nil, "A concealed copy, like a password, is never a link")
+        board.clearContents()
+        board.writeObjects([image])
+        precondition(LiveEditImagePaste.link(from: board) == nil, "An image is not a link")
+
+        print("PASS: image data saves as a PNG path, image files paste their path, links paste trimmed, text stays text")
     }
 }

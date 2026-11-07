@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 /// Pasting into Live Edit: CLI prompts take no inline images, so images paste as file paths.
 /// Copied image files keep their own path; image data is saved as a PNG in the temporary folder.
+/// Links paste as themselves.
 nonisolated enum LiveEditImagePaste {
     /// Nil when the pasteboard holds no image; throws when an image could not be saved.
     static func paths(from pasteboard: NSPasteboard, folder: URL = Self.defaultFolder) throws -> [String]? {
@@ -26,6 +27,16 @@ nonisolated enum LiveEditImagePaste {
     static func hasImage(_ pasteboard: NSPasteboard) -> Bool {
         pasteboard.canReadObject(forClasses: [NSURL.self], options: self.imageFileOptions)
             || (pasteboard.availableType(from: [.string]) == nil && pasteboard.canReadObject(forClasses: [NSImage.self]))
+    }
+
+    /// The copied text when it is a single URI with a scheme, like https://…, mailto:… or slack://…; nil otherwise.
+    static func link(from pasteboard: NSPasteboard) -> String? {
+        // Password managers mark copied secrets as concealed; those are never offered.
+        guard pasteboard.types?.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) != true,
+              let text = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.range(of: #"^[A-Za-z][A-Za-z0-9+.-]*:\S+$"#, options: .regularExpression) != nil
+        else { return nil }
+        return text
     }
 
     static let defaultFolder = FileManager.default.temporaryDirectory.appendingPathComponent("FluidVoiceLiveEdit", isDirectory: true)

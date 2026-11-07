@@ -572,6 +572,7 @@ struct NotchExpandedView: View {
     @Environment(\.theme) private var theme
     @State private var isHoveringNotch = false
     @State private var clipboardHasImage = false
+    @State private var clipboardHasLink = false
     @State private var clipboardChangeCount = -1
     @State private var isHoveringPromptChip = false
     @State private var isHoveringPromptMenu = false
@@ -788,7 +789,7 @@ struct NotchExpandedView: View {
         }
     }
 
-    /// Edit shows on hover; Paste image whenever the clipboard holds an image not yet pasted, with Edit to its left.
+    /// Edit shows on hover; Paste image or Paste link whenever the clipboard holds one not yet pasted, with Edit to its left.
     private var liveEditPills: some View {
         HStack(spacing: 4) {
             if self.isHoveringNotch {
@@ -796,6 +797,9 @@ struct NotchExpandedView: View {
             }
             if self.clipboardHasImage, self.clipboardChangeCount != self.liveEdit.pastedClipboardChangeCount {
                 self.notchPill("Paste image", help: "Add the copied image after the newest words") { self.liveEdit.pasteImagesAtEnd() }
+            }
+            if self.clipboardHasLink, self.clipboardChangeCount != self.liveEdit.pastedClipboardChangeCount {
+                self.notchPill("Paste link", help: "Add the copied link after the newest words") { self.liveEdit.pasteLinkAtEnd() }
             }
         }
     }
@@ -808,6 +812,7 @@ struct NotchExpandedView: View {
         guard self.canOpenLiveEdit, pasteboard.changeCount != self.clipboardChangeCount else { return }
         self.clipboardChangeCount = pasteboard.changeCount
         self.clipboardHasImage = LiveEditImagePaste.hasImage(pasteboard)
+        self.clipboardHasLink = LiveEditImagePaste.link(from: pasteboard) != nil
     }
 
     private func notchPill(_ title: String, help: String, action: @escaping () -> Void) -> some View {
@@ -1298,6 +1303,7 @@ struct NotchExpandedView: View {
         .onReceive(Self.clipboardPoll) { _ in self.checkClipboard() }
         .animation(.easeOut(duration: 0.12), value: self.isHoveringNotch)
         .animation(.easeOut(duration: 0.12), value: self.clipboardHasImage)
+        .animation(.easeOut(duration: 0.12), value: self.clipboardHasLink)
         .animation(.snappy(duration: 0.22), value: self.liveEdit.isOpen)
     }
 }

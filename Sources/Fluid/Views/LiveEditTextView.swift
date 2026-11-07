@@ -6,9 +6,10 @@ private final class LiveEditNSTextView: NSTextView {
     var onCommandReturn: (() -> Void)?
 
     /// CLI prompts take no inline images, so a pasted image shows as an `[image N]` placeholder
-    /// that becomes the image file's path when the dictation stops.
+    /// that becomes the image file's path when the dictation stops. A link pastes trimmed, and hides the Paste Link button.
     override func paste(_ sender: Any?) {
-        guard var insertion = LiveEditSession.shared.clipboardImagePlaceholders() else { return super.paste(sender) }
+        let session = LiveEditSession.shared
+        guard var insertion = session.clipboardImagePlaceholders() ?? session.clipboardLink() else { return super.paste(sender) }
         let text = self.string as NSString, range = self.selectedRange()
         func isSpace(at index: Int) -> Bool {
             guard index >= 0, index < text.length, let scalar = UnicodeScalar(text.character(at: index)) else { return true }

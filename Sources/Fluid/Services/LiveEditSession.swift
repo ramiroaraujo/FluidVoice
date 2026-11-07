@@ -21,7 +21,9 @@ final class LiveEditSession: ObservableObject {
     var onStopRequested: (() -> Void)?
     /// Files behind the `[image N]` placeholders pasted into the editor; N is the index plus one.
     private(set) var imagePaths: [String] = []
-    /// The clipboard's change count when its image was last pasted; the Paste Image button hides until it changes.
+    /// Links pasted into the editor; the AI cleanup keeps them as written.
+    private(set) var links: [String] = []
+    /// The clipboard's change count when its image or link was last pasted; the Paste buttons hide until it changes.
     @Published private(set) var pastedClipboardChangeCount: Int?
 
     var hasEdits: Bool { self.text != self.recognizedText }
@@ -67,6 +69,20 @@ final class LiveEditSession: ObservableObject {
         self.appendAtEnd(placeholders)
     }
 
+    /// Returns the clipboard's link, or nil when the clipboard holds none.
+    func clipboardLink() -> String? {
+        guard let link = LiveEditImagePaste.link(from: .general) else { return nil }
+        self.pastedClipboardChangeCount = NSPasteboard.general.changeCount
+        self.links.append(link)
+        return link
+    }
+
+    /// The notch's Paste Link button: the link goes after the newest words, like the Paste Image button.
+    func pasteLinkAtEnd() {
+        guard let link = self.clipboardLink() else { return }
+        self.appendAtEnd(link)
+    }
+
     /// Hold to Capture Screenshot: the screenshot goes after the newest words, like the Paste Image button.
     func appendScreenshot(at path: String) {
         self.appendAtEnd(self.placeholders(forImagesAt: [path]))
@@ -79,8 +95,8 @@ final class LiveEditSession: ObservableObject {
         }.joined(separator: " ")
     }
 
-    private func appendAtEnd(_ placeholders: String) {
-        self.text += (self.text.last?.isWhitespace ?? true ? "" : " ") + placeholders
+    private func appendAtEnd(_ insertion: String) {
+        self.text += (self.text.last?.isWhitespace ?? true ? "" : " ") + insertion
         NotchOverlayManager.shared.updateTranscriptionText(self.text)
     }
 
@@ -116,8 +132,8 @@ final class LiveEditSession: ObservableObject {
     }
 
     /// Merges the final transcript under the hand edits, swaps image placeholders for their file paths,
-    /// and ends the session. Returns the paths the text contains.
-    func finish(finalTranscript: String) -> (text: String, imagePaths: [String]) {
+    /// and ends the session. Returns the image paths and links the text contains, which the AI cleanup must keep as written.
+    func finish(finalTranscript: String) -> (text: String, protectedText: [String]) {
         defer { self.reset() }
         guard self.hasEdits else { return (finalTranscript, []) }
         DebugLogger.shared.info("Live Edit merged hand edits into the final transcript", source: "LiveEdit")
@@ -129,7 +145,7 @@ final class LiveEditSession: ObservableObject {
             text = text.replacingOccurrences(of: placeholder, with: path)
             usedPaths.append(path)
         }
-        return (text, usedPaths)
+        return (text, usedPaths + self.links.filter { text.contains($0) })
     }
 
     private func reset() {
@@ -139,6 +155,7 @@ final class LiveEditSession: ObservableObject {
         self.openingCaret = nil
         self.sendRequested = false
         self.imagePaths = []
+        self.links = []
         self.pastedClipboardChangeCount = nil
     }
 }
