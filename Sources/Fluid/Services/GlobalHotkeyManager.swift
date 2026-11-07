@@ -1287,6 +1287,11 @@ final class GlobalHotkeyManager: NSObject {
                !isAutorepeat,
                self.activePrimaryShortcutPress?.keyboardKeyCode == keyCode
             { self.activePrimaryShortcutPress = nil }
+            // Esc closes a Hold to Capture overlay without attaching it, and leaves dictation running.
+            if keyCode == 53, LiveEditScreenshot.shared.isShowing {
+                LiveEditScreenshot.shared.cancel()
+                return nil
+            }
             // The application owns cancellation output; fallback managers only discard capture.
             // A plain Esc closes the Live Edit editor instead of cancelling.
             let closesLiveEdit = LiveEditSession.shared.isOpen && keyCode == 53 &&
@@ -2795,7 +2800,10 @@ extension GlobalHotkeyManager {
     /// modifier state hides it. The event still reaches the target app.
     private func handleHoldToCapture(modifiers: NSEvent.ModifierFlags) {
         guard let modifier = SettingsStore.shared.holdToCaptureModifier else { return }
-        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == modifier.flag else {
+        // Flags don't tell the sides apart, so the tracked key codes decide Right Shift.
+        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == modifier.flag,
+              modifier.keyCodes.contains(where: { self.pressedModifierKeyCodes.contains(UInt16($0)) })
+        else {
             LiveEditScreenshot.shared.modifierReleased()
             return
         }

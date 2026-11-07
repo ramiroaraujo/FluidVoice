@@ -9,3 +9,5 @@ xcrun swiftc -O -parse-as-library Sources/Fluid/Services/LiveEditMerge.swift Tes
 "$task_test_dir/merge-tests"
 xcrun swiftc -O -parse-as-library Sources/Fluid/Services/LiveEditImagePaste.swift Tests/LiveEditImagePasteTests.swift -o "$task_test_dir/paste-tests"
 "$task_test_dir/paste-tests"
+xcrun swiftc -O -parse-as-library Sources/Fluid/Services/LiveEditMarkup.swift Tests/LiveEditMarkupTests.swift -o "$task_test_dir/markup-tests"
+"$task_test_dir/markup-tests"

@@ -6311,6 +6311,7 @@ extension SettingsStore {
 
     enum HoldToSendModifier: String, CaseIterable, Identifiable {
         case shift
+        case rightShift
         case control
         case option
         case command
@@ -6324,6 +6325,8 @@ extension SettingsStore {
             switch self {
             case .shift:
                 return "Shift"
+            case .rightShift:
+                return "Right Shift"
             case .control:
                 return "Control"
             case .option:
@@ -6335,27 +6338,30 @@ extension SettingsStore {
             }
         }
 
-        /// Reads the physical keys on either side; session flags can lag behind synthesized paste events.
-        var isHeld: Bool {
-            let keyCodes: [Int]
+        /// The physical keys that count, on either side unless the case names one.
+        var keyCodes: [Int] {
             switch self {
-            case .shift:
-                keyCodes = [kVK_Shift, kVK_RightShift]
-            case .control:
-                keyCodes = [kVK_Control, kVK_RightControl]
-            case .option:
-                keyCodes = [kVK_Option, kVK_RightOption]
-            case .command:
-                keyCodes = [kVK_Command, kVK_RightCommand]
-            case .function:
-                keyCodes = [kVK_Function]
+            case .shift: [kVK_Shift, kVK_RightShift]
+            case .rightShift: [kVK_RightShift]
+            case .control: [kVK_Control, kVK_RightControl]
+            case .option: [kVK_Option, kVK_RightOption]
+            case .command: [kVK_Command, kVK_RightCommand]
+            case .function: [kVK_Function]
             }
-            return keyCodes.contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
+        }
+
+        /// Reads the physical keys; session flags can lag behind synthesized paste events.
+        var isHeld: Bool {
+            // Key state reports a right-hand modifier under the left key's code; the device flag tells the sides apart.
+            if self == .rightShift {
+                return CGEventSource.flagsState(.hidSystemState).rawValue & UInt64(NX_DEVICERSHIFTKEYMASK) != 0
+            }
+            return self.keyCodes.contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
         }
 
         var flag: NSEvent.ModifierFlags {
             switch self {
-            case .shift: .shift
+            case .shift, .rightShift: .shift
             case .control: .control
             case .option: .option
             case .command: .command
@@ -6364,10 +6370,10 @@ extension SettingsStore {
         }
     }
 
-    /// Hold to Capture Screenshot while dictating; nil turns it off. Option until the user picks.
+    /// Hold to Capture Screenshot while dictating; nil turns it off. Right Shift until the user picks.
     var holdToCaptureModifier: HoldToSendModifier? {
         get {
-            guard let rawValue = self.defaults.string(forKey: Keys.holdToCaptureModifier) else { return .option }
+            guard let rawValue = self.defaults.string(forKey: Keys.holdToCaptureModifier) else { return .rightShift }
             return HoldToSendModifier(rawValue: rawValue)
         }
         set {

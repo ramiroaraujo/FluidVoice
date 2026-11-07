@@ -115,7 +115,7 @@ final class NotchOverlayManager {
     private(set) var currentNotchPresentationMode: SettingsStore.NotchPresentationMode = .standard
     private(set) var currentNotchPresentationPolicy = NotchPresentationPolicy.standard
     private(set) var currentScreenSupportsCompactPresentation = false
-    private var presentationPolicyScreen: NSScreen?
+    private(set) var presentationPolicyScreen: NSScreen?
     private static let transientOverlayStatusTexts: Set<String> = [
         "Transcribing",
         "Refining",

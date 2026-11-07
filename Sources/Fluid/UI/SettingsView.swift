@@ -2282,7 +2282,7 @@ private extension SettingsView {
                 icon: "camera.viewfinder",
                 color: .secondary,
                 title: "Hold to Capture Screenshot",
-                description: "While dictating, hold this key and drag a box to add a screenshot of it after the newest words. Needs Screen Recording permission."
+                description: "While dictating, hold this key and drag a box to capture it. Keep holding to draw arrows, brush strokes or squares on it; letting go adds it after the newest words, and Esc drops it. Needs Screen Recording permission."
             )
             Spacer(minLength: 12)
             self.holdModifierPicker("Screenshot key", selection: Binding(
