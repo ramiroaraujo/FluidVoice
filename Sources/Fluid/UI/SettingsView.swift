@@ -507,6 +507,8 @@ struct SettingsView: View {
                                         self.shortcutGroupDivider
                                         self.holdToSendRow
                                         self.shortcutGroupDivider
+                                        self.holdToCaptureRow
+                                        self.shortcutGroupDivider
                                         self.shortcutGroup {
                                             self.shortcutRow(
                                                 content: .init(
@@ -2266,19 +2268,40 @@ private extension SettingsView {
                 description: "Hold this key while dictation pastes to press \(self.settings.spokenSendKey.displayName) after it. Pick one that isn't in your dictation shortcut."
             )
             Spacer(minLength: 12)
-            FluidDropdownPicker("Auto-send key", selectedTitle: self.settings.holdToSendModifier?.displayName ?? "Off", selection: Binding(
+            self.holdModifierPicker("Auto-send key", selection: Binding(
                 get: { self.settings.holdToSendModifier },
                 set: { self.settings.holdToSendModifier = $0 }
-            )) {
-                Text("Off").tag(SettingsStore.HoldToSendModifier?.none)
-                ForEach(SettingsStore.HoldToSendModifier.allCases) { modifier in
-                    Text(modifier.displayName).tag(Optional(modifier))
-                }
-            }
-            .fluidDropdownStyle()
-            .frame(width: 170, alignment: .trailing)
+            ))
         }
         .padding(.vertical, 6)
+    }
+
+    private var holdToCaptureRow: some View {
+        HStack(alignment: .center, spacing: 20) {
+            self.shortcutLabel(
+                icon: "camera.viewfinder",
+                color: .secondary,
+                title: "Hold to Capture Screenshot",
+                description: "While dictating, hold this key and drag a box to add a screenshot of it after the newest words. Needs Screen Recording permission."
+            )
+            Spacer(minLength: 12)
+            self.holdModifierPicker("Screenshot key", selection: Binding(
+                get: { self.settings.holdToCaptureModifier },
+                set: { self.settings.holdToCaptureModifier = $0 }
+            ))
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func holdModifierPicker(_ title: String, selection: Binding<SettingsStore.HoldToSendModifier?>) -> some View {
+        FluidDropdownPicker(title, selectedTitle: selection.wrappedValue?.displayName ?? "Off", selection: selection) {
+            Text("Off").tag(SettingsStore.HoldToSendModifier?.none)
+            ForEach(SettingsStore.HoldToSendModifier.allCases) { modifier in
+                Text(modifier.displayName).tag(Optional(modifier))
+            }
+        }
+        .fluidDropdownStyle()
+        .frame(width: 170, alignment: .trailing)
     }
 
     var isRecordingAnyShortcut: Bool {

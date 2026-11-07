@@ -1573,6 +1573,7 @@ final class GlobalHotkeyManager: NSObject {
                     modifiers: eventModifiers
                 )
             }
+            self.handleHoldToCapture(modifiers: eventModifiers)
 
             for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
                 if self.handleModifierOnlyShortcutFlagsChanged(
@@ -2788,6 +2789,22 @@ extension GlobalHotkeyManager {
             !self.asrService.isDictionaryTrainingCaptureActive &&
             (self.isDictateRecordingProvider?() ?? false) &&
             !(self.isShortcutCaptureActiveProvider?() ?? false)
+    }
+
+    /// Hold to Capture Screenshot: the key held alone while dictating shows the selector; any other
+    /// modifier state hides it. The event still reaches the target app.
+    private func handleHoldToCapture(modifiers: NSEvent.ModifierFlags) {
+        guard let modifier = SettingsStore.shared.holdToCaptureModifier else { return }
+        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == modifier.flag else {
+            LiveEditScreenshot.shared.modifierReleased()
+            return
+        }
+        // Option and the other modifiers type while the Live Edit editor is open.
+        guard self.asrService.isRunningOrStarting, !LiveEditSession.shared.isOpen,
+              self.isDictateRecordingProvider?() ?? false,
+              !(self.isShortcutCaptureActiveProvider?() ?? false)
+        else { return }
+        LiveEditScreenshot.shared.begin()
     }
 
     private func handleHoldToMute(type: CGEventType, event: CGEvent, proxy: CGEventTapProxy?) -> Bool {

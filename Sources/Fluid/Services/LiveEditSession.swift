@@ -58,15 +58,28 @@ final class LiveEditSession: ObservableObject {
         }
         guard let paths else { return nil }
         self.pastedClipboardChangeCount = NSPasteboard.general.changeCount
-        return paths.map { path in
-            self.imagePaths.append(path)
-            return "[image \(self.imagePaths.count)]"
-        }.joined(separator: " ")
+        return self.placeholders(forImagesAt: paths)
     }
 
     /// The notch's Paste Image button: the images go after the newest words, and speech continues after them.
     func pasteImagesAtEnd() {
         guard let placeholders = self.clipboardImagePlaceholders() else { return }
+        self.appendAtEnd(placeholders)
+    }
+
+    /// Hold to Capture Screenshot: the screenshot goes after the newest words, like the Paste Image button.
+    func appendScreenshot(at path: String) {
+        self.appendAtEnd(self.placeholders(forImagesAt: [path]))
+    }
+
+    private func placeholders(forImagesAt paths: [String]) -> String {
+        paths.map { path in
+            self.imagePaths.append(path)
+            return "[image \(self.imagePaths.count)]"
+        }.joined(separator: " ")
+    }
+
+    private func appendAtEnd(_ placeholders: String) {
         self.text += (self.text.last?.isWhitespace ?? true ? "" : " ") + placeholders
         NotchOverlayManager.shared.updateTranscriptionText(self.text)
     }

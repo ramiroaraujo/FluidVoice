@@ -6135,6 +6135,7 @@ private extension SettingsStore {
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
         static let holdToSendModifier = "HoldToSendModifier"
+        static let holdToCaptureModifier = "HoldToCaptureModifier"
         static let reliablePasteMigrationV1 = "TextInsertionModeMigratedToReliablePasteV1"
         static let autoUpdateCheckEnabled = UpdateKeys.autoUpdateCheckEnabled
         static let showUpdatePopups = UpdateKeys.showUpdatePopups
@@ -6350,6 +6351,28 @@ extension SettingsStore {
                 keyCodes = [kVK_Function]
             }
             return keyCodes.contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
+        }
+
+        var flag: NSEvent.ModifierFlags {
+            switch self {
+            case .shift: .shift
+            case .control: .control
+            case .option: .option
+            case .command: .command
+            case .function: .function
+            }
+        }
+    }
+
+    /// Hold to Capture Screenshot while dictating; nil turns it off. Option until the user picks.
+    var holdToCaptureModifier: HoldToSendModifier? {
+        get {
+            guard let rawValue = self.defaults.string(forKey: Keys.holdToCaptureModifier) else { return .option }
+            return HoldToSendModifier(rawValue: rawValue)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue?.rawValue ?? "off", forKey: Keys.holdToCaptureModifier)
         }
     }
 

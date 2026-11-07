@@ -11,10 +11,15 @@ nonisolated enum LiveEditImagePaste {
         }
         // Text copied together with images still pastes as text.
         guard pasteboard.availableType(from: [.string]) == nil, let png = self.pngData(from: pasteboard) else { return nil }
+        return try [self.save(png, in: folder)]
+    }
+
+    /// Writes PNG data to a new file in `folder` and returns its path.
+    static func save(_ png: Data, in folder: URL = Self.defaultFolder) throws -> String {
         let file = folder.appendingPathComponent("image-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(6)).png")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try png.write(to: file)
-        return [file.path]
+        return file.path
     }
 
     /// Whether `paths(from:)` would find images, checked from the pasteboard types without reading image data.
