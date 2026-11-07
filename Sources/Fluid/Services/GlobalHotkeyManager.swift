@@ -2796,13 +2796,13 @@ extension GlobalHotkeyManager {
             !(self.isShortcutCaptureActiveProvider?() ?? false)
     }
 
-    /// Hold to Capture Screenshot: the key held alone while dictating shows the selector; any other
-    /// modifier state hides it. The event still reaches the target app.
+    /// Hold to Capture Screenshot: its keys held together, and nothing else, while dictating show the
+    /// selector; any other modifier state hides it. The events still reach the target app.
     private func handleHoldToCapture(modifiers: NSEvent.ModifierFlags) {
-        guard let modifier = SettingsStore.shared.holdToCaptureModifier else { return }
-        // Flags don't tell the sides apart, so the tracked key codes decide Right Shift.
-        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == modifier.flag,
-              modifier.keyCodes.contains(where: { self.pressedModifierKeyCodes.contains(UInt16($0)) })
+        guard SettingsStore.shared.holdToCapture else { return }
+        // Flags don't tell the sides apart, so the tracked key codes decide.
+        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == [.option, .shift],
+              self.pressedModifierKeyCodes == LiveEditScreenshot.keyCodes
         else {
             LiveEditScreenshot.shared.modifierReleased()
             return

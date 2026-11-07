@@ -2282,13 +2282,13 @@ private extension SettingsView {
                 icon: "camera.viewfinder",
                 color: .secondary,
                 title: "Hold to Capture Screenshot",
-                description: "While dictating, hold this key and drag a box to capture it. Keep holding to draw arrows, brush strokes or squares on it; letting go adds it after the newest words, and Esc drops it. Needs Screen Recording permission."
+                description: "While dictating, hold Right Option and Right Shift together and drag a box to capture it. Keep holding to draw brush strokes, arrows or squares on it; letting go adds it after the newest words, and Esc drops it. Needs Screen Recording permission."
             )
             Spacer(minLength: 12)
-            self.holdModifierPicker("Screenshot key", selection: Binding(
-                get: { self.settings.holdToCaptureModifier },
-                set: { self.settings.holdToCaptureModifier = $0 }
-            ))
+            Toggle("", isOn: self.$settings.holdToCapture)
+                .toggleStyle(.switch)
+                .tint(self.theme.palette.accent)
+                .labelsHidden()
         }
         .padding(.vertical, 6)
     }

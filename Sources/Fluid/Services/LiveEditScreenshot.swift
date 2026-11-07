@@ -2,14 +2,24 @@ import AppKit
 import ScreenCaptureKit
 import SwiftUI
 
-/// Hold to Capture Screenshot: while dictating, holding the configured key alone turns the pointer
-/// into the screenshot crosshair on every screen. Dragging a box captures it, and while the key stays
-/// held the box takes arrows, brush strokes and squares. Letting go of the key appends the marked-up screenshot
+/// Hold to Capture Screenshot: while dictating, holding Right Option and Right Shift together, and nothing
+/// else, turns the pointer into the screenshot crosshair on every screen. Dragging a box captures it, and while
+/// the keys stay held the box takes arrows, brush strokes and squares. Letting go appends the marked-up screenshot
 /// to the transcript as an `[image N]` placeholder. Our own overlay, because macOS's screenshot tool
 /// resizes from the center while Option is held.
 @MainActor
 final class LiveEditScreenshot {
     static let shared = LiveEditScreenshot()
+
+    /// Right Option and Right Shift.
+    static let keyCodes: Set<UInt16> = [61, 60]
+
+    /// Reads the physical keys; key state reports right-hand modifiers under the left keys' codes, so the
+    /// device flags tell the sides apart.
+    static var keysHeld: Bool {
+        let mask = UInt64(NX_DEVICERALTKEYMASK | NX_DEVICERSHIFTKEYMASK)
+        return CGEventSource.flagsState(.hidSystemState).rawValue & mask == mask
+    }
 
     /// The cursor macOS shows for ⌘⇧4, redrawn from measurements of screencapture's own: a black cross
     /// with a faint white edge and a light ring, and two numbers beside it, below the cross or above it
@@ -59,6 +69,26 @@ final class LiveEditScreenshot {
     }
 
     private static var cachedCursor: (key: String, cursor: NSCursor)?
+
+    /// The brush tool's pointer inside the box: a pencil, black with a white outline like the system
+    /// pointers so it shows on light and dark screenshots, with its tip on the line.
+    static let pencilCursor: NSCursor = {
+        guard let symbol = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil) else { return .crosshair }
+        func tinted(_ color: NSColor) -> NSImage {
+            symbol.withSymbolConfiguration(.init(pointSize: 16, weight: .regular).applying(.init(paletteColors: [color]))) ?? symbol
+        }
+        let (outline, fill) = (tinted(.white), tinted(.black))
+        let image = NSImage(size: NSSize(width: fill.size.width + 2, height: fill.size.height + 2), flipped: true) { _ in
+            for dx: CGFloat in [0, 1, 2] {
+                for dy: CGFloat in [0, 1, 2] where dx != 1 || dy != 1 {
+                    outline.draw(in: NSRect(origin: NSPoint(x: dx, y: dy), size: outline.size), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                }
+            }
+            fill.draw(in: NSRect(origin: NSPoint(x: 1, y: 1), size: fill.size), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            return true
+        }
+        return NSCursor(image: image, hotSpot: NSPoint(x: 3, y: 14))
+    }()
 
     /// Whole points with the locale's grouping, like screencapture's "1.301".
     private static let numberFormatter: NumberFormatter = {
@@ -195,7 +225,7 @@ final class LiveEditScreenshot {
         view.onDragEnd = { [weak self] in
             guard let self else { return }
             self.isDragging = false
-            if SettingsStore.shared.holdToCaptureModifier?.isHeld != true { self.modifierReleased() }
+            if !Self.keysHeld { self.modifierReleased() }
         }
         panel.contentView = view
         panel.setFrame(screen.frame, display: false)
@@ -252,9 +282,9 @@ private final class SelectionPanel: NSPanel {
 /// is drawn shows its screenshot under the marks, with the markup bar under it.
 private final class SelectionView: NSView {
     static let colors: [NSColor] = [.systemRed, .systemYellow, .systemBlue, .white]
-    /// Kept between captures.
-    private static var tool = LiveEditMarkup.Tool.arrow
+    /// Kept between captures; the tool starts on the brush each time.
     private static var color = NSColor.systemRed
+    private var tool = LiveEditMarkup.Tool.brush
 
     var onDragStart: (() -> Void)?
     /// A new box replaces any box on any screen.
@@ -287,11 +317,12 @@ private final class SelectionView: NSView {
     }
 
     /// Like ⌘⇧4, the numbers are the pointer's position from the screen's top left, or the box's size
-    /// while it's dragged. Drawing inside a box shows the plain cross.
+    /// while it's dragged. Drawing inside a box shows the plain cross, or a pencil for the brush.
     func updateCursor() {
         guard let window else { return }
         let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if !self.bar.isHidden, self.bar.frame.contains(point) { return NSCursor.arrow.set() }
+        if self.tool == .brush, self.drag == nil, self.box?.contains(point) == true { return LiveEditScreenshot.pencilCursor.set() }
         let numbers: (CGFloat, CGFloat)? = if let drag {
             (abs(drag.current.x - drag.start.x), abs(drag.current.y - drag.start.y))
         } else if self.box?.contains(point) == true {
@@ -305,9 +336,8 @@ private final class SelectionView: NSView {
 
     private func makeBar() -> MarkupBar {
         MarkupBar(
-            tool: Self.tool, color: Self.color, canUndo: !self.marks.isEmpty,
-            key: SettingsStore.shared.holdToCaptureModifier?.displayName ?? "the key",
-            pick: { [weak self] in Self.tool = $0; self?.refreshBar() },
+            tool: self.tool, color: Self.color, canUndo: !self.marks.isEmpty,
+            pick: { [weak self] in self?.tool = $0; self?.refreshBar() },
             pickColor: { [weak self] in Self.color = $0; self?.refreshBar() },
             undo: { [weak self] in
                 guard let self, !self.marks.isEmpty else { return }
@@ -343,7 +373,7 @@ private final class SelectionView: NSView {
         let point = self.convert(event.locationInWindow, from: nil)
         self.onDragStart?()
         if let box, box.contains(point) {
-            self.marks.append(.init(tool: Self.tool, color: Self.color, points: [self.boxLocal(point, in: box)]))
+            self.marks.append(.init(tool: self.tool, color: Self.color, points: [self.boxLocal(point, in: box)]))
         } else {
             self.clear()
             self.onBoxStart?()
@@ -446,7 +476,6 @@ private struct MarkupBar: View {
     let color: NSColor
     let canUndo: Bool
     /// The hold key's name, for the hint.
-    let key: String
     let pick: (LiveEditMarkup.Tool) -> Void
     let pickColor: (NSColor) -> Void
     let undo: () -> Void
@@ -483,7 +512,7 @@ private struct MarkupBar: View {
             .disabled(!self.canUndo)
             .opacity(self.canUndo ? 1 : 0.35)
             .help("Undo")
-            Text("Let go of \(self.key) to attach")
+            Text("Let go of the keys to attach")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
                 .padding(.leading, 6)
