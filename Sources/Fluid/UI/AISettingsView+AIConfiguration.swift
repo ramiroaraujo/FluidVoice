@@ -67,6 +67,8 @@ extension AIEnhancementSettingsView {
             }
             if self.selectedConfigurationSection == .providers {
                 Divider()
+                self.offlineFallbackSection
+                Divider()
                 self.editModeSection
             }
         }

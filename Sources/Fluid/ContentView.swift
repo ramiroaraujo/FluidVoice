@@ -76,6 +76,34 @@ nonisolated enum DictationStreamingFallbackPolicy {
     }
 }
 
+nonisolated enum DictationOfflineFallbackPolicy {
+    /// Only failures to reach the provider qualify. Auth, rate-limit and provider
+    /// errors keep the normal failure path.
+    static func isConnectivityFailure(_ error: Error) -> Bool {
+        if let llmError = error as? LLMError {
+            switch llmError {
+            case .timeout:
+                return true
+            case let .networkError(underlying):
+                return self.isConnectivityFailure(underlying)
+            default:
+                return false
+            }
+        }
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .notConnectedToInternet, .networkConnectionLost, .timedOut,
+             .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+             .dataNotAllowed, .internationalRoamingOff,
+             // Captive portals intercept TLS before the user signs in.
+             .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 final nonisolated class DictationAIStreamPreviewBuffer: @unchecked Sendable {
     typealias Publisher = @MainActor @Sendable (String) -> Void
 
@@ -2793,6 +2821,8 @@ struct ContentView: View {
         let text: String
         let tokensPerSecond: Double?
         let fluidIntelligenceLatencyMilliseconds: Int?
+        /// Set when the offline fallback produced the text instead of the routed provider.
+        var fallbackModel: String? = nil
     }
 
     private func processTextWithAI(
@@ -2823,7 +2853,8 @@ struct ContentView: View {
         dictationSlot: SettingsStore.DictationShortcutSlot? = nil,
         streamHandler: PrivateAIStreamHandler? = nil,
         benchmarkID: String? = nil,
-        stopSnapshot: DictationStopSnapshot? = nil
+        stopSnapshot: DictationStopSnapshot? = nil,
+        allowsOfflineFallback: Bool = false
     ) async throws -> AITextProcessingResult {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             throw MeetingModelResidencyError.busy
@@ -3038,34 +3069,68 @@ struct ContentView: View {
         DebugLogger.shared.info("Using LLMClient for transcription (streaming=\(enableStreaming))", source: "ContentView")
 
         let response: LLMClient.Response
-        if enableStreaming {
-            do {
-                response = try await LLMClient.shared.call(config)
-            } catch {
-                guard DictationStreamingFallbackPolicy.shouldRetryWithoutStreaming(after: error) else {
-                    self.appBench("ai_streaming_fallback_skipped reason=transport_or_cancel")
-                    throw error
+        do {
+            if enableStreaming {
+                do {
+                    response = try await LLMClient.shared.call(config)
+                } catch {
+                    guard DictationStreamingFallbackPolicy.shouldRetryWithoutStreaming(after: error) else {
+                        self.appBench("ai_streaming_fallback_skipped reason=transport_or_cancel")
+                        throw error
+                    }
+                    self.appBench("ai_streaming_fallback_start")
+                    DebugLogger.shared.warning(
+                        "Streaming dictation post-processing failed; retrying without streaming: \(error.localizedDescription)",
+                        source: "ContentView"
+                    )
+                    let fallbackConfig = LLMClient.Config(
+                        messages: messages,
+                        model: derivedSelectedModel,
+                        baseURL: derivedBaseURL,
+                        apiKey: apiKey,
+                        streaming: false,
+                        tools: [],
+                        temperature: isTemperatureUnsupported ? nil : 0.2,
+                        extraParameters: extraParams,
+                        benchmarkID: benchmarkID
+                    )
+                    response = try await LLMClient.shared.call(fallbackConfig)
                 }
-                self.appBench("ai_streaming_fallback_start")
+            } else {
+                response = try await LLMClient.shared.call(config)
+            }
+        } catch let error where allowsOfflineFallback
+            && SettingsStore.shared.appleOnDeviceOfflineFallbackEnabled
+            && DictationOfflineFallbackPolicy.isConnectivityFailure(error)
+        {
+            // Surface the original network error if the on-device retry cannot help.
+            DebugLogger.shared.warning(
+                "Provider unreachable (\(error.localizedDescription)); retrying with \(AppleOnDeviceModel.displayName)",
+                source: "ContentView"
+            )
+            let fallbackText: String?
+            do {
+                fallbackText = try await AppleOnDeviceModel.enhance(systemPrompt: systemPrompt, userContent: userMessageContent)
+            } catch let fallbackError {
+                DebugLogger.shared.error("\(AppleOnDeviceModel.displayName) fallback failed: \(fallbackError)", source: "ContentView")
+                throw error
+            }
+            guard let fallbackText, !fallbackText.isEmpty else {
                 DebugLogger.shared.warning(
-                    "Streaming dictation post-processing failed; retrying without streaming: \(error.localizedDescription)",
+                    "\(AppleOnDeviceModel.displayName) fallback skipped: \(AppleOnDeviceModel.unavailableReason ?? "empty response")",
                     source: "ContentView"
                 )
-                let fallbackConfig = LLMClient.Config(
-                    messages: messages,
-                    model: derivedSelectedModel,
-                    baseURL: derivedBaseURL,
-                    apiKey: apiKey,
-                    streaming: false,
-                    tools: [],
-                    temperature: isTemperatureUnsupported ? nil : 0.2,
-                    extraParameters: extraParams,
-                    benchmarkID: benchmarkID
-                )
-                response = try await LLMClient.shared.call(fallbackConfig)
+                throw error
             }
-        } else {
-            response = try await LLMClient.shared.call(config)
+            if self.shouldTracePromptProcessing {
+                self.logDictationPromptTrace("Model answer (A)", value: fallbackText)
+            }
+            return AITextProcessingResult(
+                text: fallbackText,
+                tokensPerSecond: nil,
+                fluidIntelligenceLatencyMilliseconds: nil,
+                fallbackModel: AppleOnDeviceModel.displayName
+            )
         }
 
         // Log thinking if present (for debugging)
@@ -3325,10 +3390,12 @@ struct ContentView: View {
                     dictationSlot: activeDictationSlot,
                     streamHandler: streamHandler,
                     benchmarkID: pipelineID,
-                    stopSnapshot: stopSnapshot
+                    stopSnapshot: stopSnapshot,
+                    allowsOfflineFallback: true
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text
+                if let fallbackModel = result.fallbackModel { postProcessingModel = fallbackModel }
                 self.appBench("ai_process_return id=\(pipelineID)")
                 aiTokensPerSecond = result.tokensPerSecond
                 streamPreview.flush()
@@ -4455,9 +4522,11 @@ struct ContentView: View {
             do {
                 let result = try await self.processTextWithAIMetrics(
                     normalizedTranscribedText,
-                    dictationSlot: .primary
+                    dictationSlot: .primary,
+                    allowsOfflineFallback: true
                 )
                 finalText = result.text
+                if let fallbackModel = result.fallbackModel { postProcessingModel = fallbackModel }
                 aiTokensPerSecond = result.tokensPerSecond
             } catch {
                 DebugLogger.shared.error(

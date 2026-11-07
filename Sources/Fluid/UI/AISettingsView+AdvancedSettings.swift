@@ -1402,6 +1402,32 @@ extension AIEnhancementSettingsView {
         }
     }
 
+    var offlineFallbackSection: some View {
+        self.stylesSection(
+            title: "Offline Fallback",
+            subtitle: "When your provider can't be reached because there's no connection, clean up dictation on this Mac instead of pasting the raw transcript."
+        ) {
+            ThemedCard(style: .subtle, padding: 16) {
+                VStack(alignment: .leading, spacing: 10) {
+                    FluidManagementRow(title: "Use \(AppleOnDeviceModel.displayName) model", detail: "Runs on this Mac. Other provider errors still fail as before.") {
+                        Toggle("Use \(AppleOnDeviceModel.displayName) model", isOn: Binding(
+                            get: { self.settings.appleOnDeviceOfflineFallbackEnabled },
+                            set: { self.settings.appleOnDeviceOfflineFallbackEnabled = $0 }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                    }
+                    if let reason = AppleOnDeviceModel.unavailableReason {
+                        Label(reason, systemImage: "exclamationmark.circle")
+                            .font(self.theme.typography.caption)
+                            .foregroundStyle(self.theme.palette.secondaryText)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     @ViewBuilder
     private func editModeProviderModelRow(providerID: String) -> some View {
         let models = self.editModeModels(for: providerID)
