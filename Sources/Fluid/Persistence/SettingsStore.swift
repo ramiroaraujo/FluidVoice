@@ -6135,6 +6135,7 @@ private extension SettingsStore {
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
         static let holdToSendModifier = "HoldToSendModifier"
+        static let holdToCapture = "HoldToCapture"
         static let reliablePasteMigrationV1 = "TextInsertionModeMigratedToReliablePasteV1"
         static let autoUpdateCheckEnabled = UpdateKeys.autoUpdateCheckEnabled
         static let showUpdatePopups = UpdateKeys.showUpdatePopups
@@ -6350,6 +6351,15 @@ extension SettingsStore {
                 keyCodes = [kVK_Function]
             }
             return keyCodes.contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
+        }
+    }
+
+    /// Hold to Capture Screenshot while dictating, on until the user turns it off.
+    var holdToCapture: Bool {
+        get { self.defaults.object(forKey: Keys.holdToCapture) as? Bool ?? true }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.holdToCapture)
         }
     }
 

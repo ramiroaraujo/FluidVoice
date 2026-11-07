@@ -208,7 +208,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             .sink { [weak self] newText in
                 guard self != nil else { return }
                 if NotchOverlayManager.shared.shouldShowOrTrackLivePreviewText {
-                    NotchOverlayManager.shared.updateTranscriptionText(newText)
+                    NotchOverlayManager.shared.updateTranscriptionText(LiveEditSession.shared.ingest(newText))
                 }
             }
             .store(in: &self.cancellables)

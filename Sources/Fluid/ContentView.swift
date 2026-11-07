@@ -2854,7 +2854,8 @@ struct ContentView: View {
         streamHandler: PrivateAIStreamHandler? = nil,
         benchmarkID: String? = nil,
         stopSnapshot: DictationStopSnapshot? = nil,
-        allowsOfflineFallback: Bool = false
+        allowsOfflineFallback: Bool = false,
+        protectedText: [String] = []
     ) async throws -> AITextProcessingResult {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             throw MeetingModelResidencyError.busy
@@ -2962,11 +2963,15 @@ struct ContentView: View {
 
         // Resolve the effective prompt once so every provider path honors
         // transient overrides such as "Transcribe with Prompt".
-        let promptText: String = {
+        let resolvedPromptText: String = {
             if let stopSnapshot { return stopSnapshot.systemPrompt }
             if let overrideSystemPrompt { return overrideSystemPrompt }
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
+        // Images pasted in Live Edit arrive as file paths the target app reads, and links as themselves; they must pass through untouched.
+        let promptText = protectedText.isEmpty ? resolvedPromptText : resolvedPromptText + "\n\n" +
+            "The transcript contains these image file paths and links: \(protectedText.joined(separator: ", ")). " +
+            "Keep each one exactly as written, character for character, where it appears. Never edit, shorten, or remove them."
 
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
@@ -3228,6 +3233,9 @@ struct ContentView: View {
         )
 
         self.clearActiveRecordingMode()
+        let liveEditSendRequested = LiveEditSession.shared.sendRequested
+        // Delivery restores the exact field; closing only hands typing focus back.
+        LiveEditSession.shared.close(restoreFocus: false)
         let stopOverlay = self.prepareOverlayForASRStop(shouldHideOverlayOnStop: shouldHideOverlayOnStop, lifecycleID: expectedOverlayLifecycleID)
         let stopUIInvalidationHold = self.holdStopUIInvalidation(whileProcessing: !stopOverlay.didRequestHide)
         defer { self.releaseStopUIInvalidation(stopUIInvalidationHold) }
@@ -3239,12 +3247,15 @@ struct ContentView: View {
         // Play the stop cue as soon as the audio engine has stopped, before the
         // (potentially slow) final transcription pass. Scoped to dictation only —
         // Command/Edit modes call asr.stop() without this callback.
-        let transcribedText = await asr.stop(
+        let finalTranscript = await asr.stop(
             onCaptureStopped: {
                 TranscriptionSoundPlayer.shared.playStopSound()
             },
             onFinalTranscriptionStarted: stopOverlay.onFinalTranscriptionStarted
         )
+        // Hand edits made in Live Edit win over the final pass's version of the same words.
+        let liveEdit = LiveEditSession.shared.finish(finalTranscript: finalTranscript)
+        let transcribedText = liveEdit.text
         self.appBench("asr_stop_return elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - asrStopStartedAt) * 1000).rounded()))")
         self.completeDictationStopSnapshot(&stopSnapshot)
         if let contextCapture, self.overlayLifecycleID == expectedOverlayLifecycleID,
@@ -3391,7 +3402,8 @@ struct ContentView: View {
                     streamHandler: streamHandler,
                     benchmarkID: pipelineID,
                     stopSnapshot: stopSnapshot,
-                    allowsOfflineFallback: true
+                    allowsOfflineFallback: true,
+                    protectedText: liveEdit.protectedText
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text
@@ -3587,7 +3599,8 @@ struct ContentView: View {
             let typingTarget = stopSnapshot.map { (pid: $0.target?.pid, shouldRestoreOriginalFocus: true) }
                 ?? self.resolveTypingTargetPID(returnToStartingField: self.settings.returnDictationToStartingField)
             let holdToSendRequested = self.settings.holdToSendModifier?.isHeld == true
-            let spokenSendRequested = spokenSendParse.shouldSend || holdToSendRequested
+            let keySendRequested = holdToSendRequested || liveEditSendRequested
+            let spokenSendRequested = spokenSendParse.shouldSend || keySendRequested
             let sendFocus = stopSnapshot == nil ? self.recordingFocusTarget : stopSnapshot?.focusTarget
             let targetMatchesRecordingFocus = typingTarget.pid != nil
                 && typingTarget.pid == sendFocus?.pid
@@ -3596,8 +3609,8 @@ struct ContentView: View {
                 && (sendsExistingDraft || !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 && targetMatchesRecordingFocus
                 && (typingTarget.shouldRestoreOriginalFocus || sendFocus.map { TypingService.isExactFocusTargetActive($0) } == true)
-                // A held key is deliberate, unlike a misheard phrase, so it may also send in terminals.
-                && (holdToSendRequested || !self.isSpokenSendBlockedApp(appInfo))
+                // A send key is deliberate, unlike a misheard phrase, so it may also send in terminals.
+                && (keySendRequested || !self.isSpokenSendBlockedApp(appInfo))
             // Dispatch insertion as soon as the destination app is ready; the
             // overlay hides asynchronously after output so it cannot delay paste.
             let focusReady = await self.prepareStoppedDictationDelivery(
@@ -5222,6 +5235,9 @@ struct ContentView: View {
         }
         NotchContentState.shared.onCancelRequested = {
             _ = self.handleCancelShortcut()
+        }
+        LiveEditSession.shared.onStopRequested = {
+            Task { await self.stopAndProcessTranscription(route: self.currentDictationOutputRouteForHotkeyStop()) }
         }
         NotchContentState.shared.onDictationPromptSelectionRequested = { selection in
             guard selection != .privateAI || PrivateAIProviderPromptFormat.isAvailable() else { return }

@@ -202,12 +202,15 @@ struct OverlayCaptionView: NSViewRepresentable {
     var opacity: CGFloat = 0.96
     var maxLines: Int?
     var isActive = true
+    /// When set, clicks reach the caption and report the clicked UTF-16 offset in the full transcript.
+    var onClick: ((Int?) -> Void)?
 
     func makeNSView(context: Context) -> OverlayCaptionNSView {
         OverlayCaptionNSView()
     }
 
     func updateNSView(_ nsView: OverlayCaptionNSView, context: Context) {
+        nsView.onClickTranscriptOffset = self.onClick
         nsView.update(caption: self.caption, context: self.context, fontSize: self.fontSize, opacity: self.opacity, reduceMotion: self.reduceMotion, isActive: self.isActive)
     }
 
@@ -294,8 +297,31 @@ final class OverlayCaptionNSView: NSView {
         self.revealLayer.setNeedsDisplay()
     }
 
-    // The caption must never take clicks or focus away from overlay controls or the target app.
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    var onClickTranscriptOffset: ((Int?) -> Void)?
+
+    // The caption must never take clicks or focus away from overlay controls or the target app,
+    // except while a click opens Live Edit.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        self.onClickTranscriptOffset == nil ? nil : super.hitTest(point)
+    }
+
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let onClick = self.onClickTranscriptOffset else { return super.mouseDown(with: event) }
+        onClick(self.transcriptOffset(at: self.convert(event.locationInWindow, from: nil)))
+    }
+
+    private func transcriptOffset(at point: NSPoint) -> Int? {
+        guard let layout = self.cachedLayout else { return nil }
+        var fraction: CGFloat = 0
+        let index = layout.manager.characterIndex(
+            for: CGPoint(x: point.x, y: point.y - self.targetY - self.contentOriginY),
+            in: layout.container,
+            fractionOfDistanceBetweenInsertionPoints: &fraction
+        )
+        return self.buffer.sourceOffset + index + (fraction > 0.5 ? 1 : 0)
+    }
 
     func update(caption: OverlayCaptionText, context: OverlayCaptionText? = nil, fontSize: CGFloat, opacity: CGFloat, reduceMotion: Bool, isActive: Bool = true) {
         guard isActive, !self.isHiddenOrHasHiddenAncestor else {

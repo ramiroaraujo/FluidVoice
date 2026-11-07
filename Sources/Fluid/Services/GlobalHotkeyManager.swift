@@ -1287,8 +1287,16 @@ final class GlobalHotkeyManager: NSObject {
                !isAutorepeat,
                self.activePrimaryShortcutPress?.keyboardKeyCode == keyCode
             { self.activePrimaryShortcutPress = nil }
+            // Esc closes a Hold to Capture overlay without attaching it, and leaves dictation running.
+            if keyCode == 53, LiveEditScreenshot.shared.isShowing {
+                LiveEditScreenshot.shared.cancel()
+                return nil
+            }
             // The application owns cancellation output; fallback managers only discard capture.
-            if SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
+            // A plain Esc closes the Live Edit editor instead of cancelling.
+            let closesLiveEdit = LiveEditSession.shared.isOpen && keyCode == 53 &&
+                eventModifiers.isDisjoint(with: HotkeyShortcut.relevantModifierMask)
+            if !closesLiveEdit, SettingsStore.shared.cancelRecordingHotkeyShortcut?.matches(keyCode: keyCode, modifiers: eventModifiers) == true {
                 let result = self.cancelCallback?() ?? .unhandled
                 // Closing a suggestion must preserve the held shortcut and capture.
                 if result == .dismissedOverlay {
@@ -1570,6 +1578,7 @@ final class GlobalHotkeyManager: NSObject {
                     modifiers: eventModifiers
                 )
             }
+            self.handleHoldToCapture(modifiers: eventModifiers)
 
             for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
                 if self.handleModifierOnlyShortcutFlagsChanged(
@@ -2787,6 +2796,25 @@ extension GlobalHotkeyManager {
             !(self.isShortcutCaptureActiveProvider?() ?? false)
     }
 
+    /// Hold to Capture Screenshot: its keys held together, and nothing else, while dictating show the
+    /// selector; any other modifier state hides it. The events still reach the target app.
+    private func handleHoldToCapture(modifiers: NSEvent.ModifierFlags) {
+        guard SettingsStore.shared.holdToCapture else { return }
+        // Flags don't tell the sides apart, so the tracked key codes decide.
+        guard modifiers.intersection(HotkeyShortcut.relevantModifierMask) == [.option, .shift],
+              self.pressedModifierKeyCodes == LiveEditScreenshot.keyCodes
+        else {
+            LiveEditScreenshot.shared.modifierReleased()
+            return
+        }
+        // Option and the other modifiers type while the Live Edit editor is open.
+        guard self.asrService.isRunningOrStarting, !LiveEditSession.shared.isOpen,
+              self.isDictateRecordingProvider?() ?? false,
+              !(self.isShortcutCaptureActiveProvider?() ?? false)
+        else { return }
+        LiveEditScreenshot.shared.begin()
+    }
+
     private func handleHoldToMute(type: CGEventType, event: CGEvent, proxy: CGEventTapProxy?) -> Bool {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = Self.modifierFlags(from: event.flags)
@@ -2807,7 +2835,9 @@ extension GlobalHotkeyManager {
         switch type {
         case .keyDown:
             let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            // Space types while the Live Edit editor is open.
             let canBegin = SettingsStore.shared.holdSpaceToMute && self.asrService.isRunningOrStarting &&
+                !LiveEditSession.shared.isOpen &&
                 !self.asrService.isDictionaryTrainingCaptureActive &&
                 (self.isDictateRecordingProvider?() ?? false) &&
                 !(self.isShortcutCaptureActiveProvider?() ?? false) &&
