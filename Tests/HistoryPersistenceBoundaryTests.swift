@@ -189,6 +189,28 @@ final class DebugLogger {
         let afterRepeatedRestore = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
         precondition(afterRepeatedRestore == [expectedRestore], "Repeated restore changes only the persisted search revision")
         print("PASS: restore during loading replaces both memory and disk")
+
+        restoreStore.replaceAIResult(id: legacy[3].id, processedText: "Redone text", processingModel: "redo-model", aiProcessingDurationMilliseconds: 42)
+        await restoreStore.finishPendingWrites()
+        guard let redone = restoreStore.entries.first, let redoneRevision = redone.searchRevision else {
+            preconditionFailure("Redo must keep a search revision")
+        }
+        precondition(redoneRevision > nextRevision, "Redo must invalidate the indexed search record")
+        precondition(
+            redone.processedText == "Redone text" && redone.characterCount == 11 && redone.wasAIProcessed
+                && redone.processingModel == "redo-model" && redone.aiProcessingDurationMilliseconds == 42
+                && redone.aiTokensPerSecond == nil && redone.aiProcessingError == nil,
+            "Redo must record the new AI result"
+        )
+        precondition(
+            redone.id == legacy[3].id && redone.timestamp == legacy[3].timestamp && redone.rawText == legacy[3].rawText
+                && redone.appName == legacy[3].appName && redone.windowTitle == legacy[3].windowTitle
+                && redone.audio == legacy[3].audio && redone.isStarred == legacy[3].isStarred,
+            "Redo must keep the dictation itself"
+        )
+        let afterRedo = try await TranscriptionHistoryWriter(defaults: defaults, url: url).load()
+        precondition(afterRedo == [redone], "Redo must persist")
+        print("PASS: redo replaces the AI result in place and re-indexes it")
         try await self.testTodaySummary(root: root, defaults: defaults, audio: audio)
         try await self.testStars(root: root, defaults: defaults, audio: audio)
     }

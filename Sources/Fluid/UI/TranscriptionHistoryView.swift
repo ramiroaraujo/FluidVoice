@@ -42,6 +42,8 @@ struct TranscriptionHistoryView: View {
     @State private var copyFeedbackTask: Task<Void, Never>?
     @State private var availableAudioFiles: Set<String> = []
     @State private var audioAvailabilityRevision = UUID()
+    @State private var redoingEntryID: UUID?
+    @State private var redoError: String?
     @FocusState private var listFocused: Bool
 
     private struct AudioAvailabilityRequest: Equatable {
@@ -182,6 +184,15 @@ struct TranscriptionHistoryView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Thank you for helping improve FluidVoice dictation.")
+        }
+        .alert(
+            "Redo Failed",
+            isPresented: Binding(get: { self.redoError != nil }, set: { if !$0 { self.redoError = nil } }),
+            presenting: self.redoError
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { error in
+            Text(error)
         }
         .sheet(item: self.$selectedReportEntry) { entry in
             TranscriptionFeedbackReportSheet(entry: entry) {
@@ -433,6 +444,15 @@ struct TranscriptionHistoryView: View {
             }
         }
 
+        if self.canRedo(entry) {
+            Button {
+                self.redoAICleanup(entry)
+            } label: {
+                Label("Redo AI Cleanup", systemImage: "arrow.clockwise")
+            }
+            .disabled(self.redoingEntryID != nil)
+        }
+
         if self.hasAudio(entry) {
             Divider()
 
@@ -588,7 +608,8 @@ struct TranscriptionHistoryView: View {
                     .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                 }
                 HistoryTextComparisonView(entry: entry, copy: self.copyToClipboard)
-                    .id(entry.id)
+                    // The diff is computed once per view; a Redo or restore raises searchRevision so it is redone.
+                    .id("\(entry.id)-\(entry.searchRevision ?? 0)")
                 FluidManagementGroup(title: "Processing") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16, alignment: .leading)], alignment: .leading, spacing: 16) {
                         if self.settings.showHistoryPerformanceMetrics {
@@ -664,6 +685,14 @@ struct TranscriptionHistoryView: View {
                     Label("Report issue", systemImage: "flag")
                 }
                 .fluidGlassAction()
+                if self.canRedo(entry) {
+                    Button { self.redoAICleanup(entry) } label: {
+                        Label(self.redoingEntryID == entry.id ? "Redoing…" : "Redo", systemImage: "arrow.clockwise")
+                    }
+                    .fluidGlassAction()
+                    .disabled(self.redoingEntryID != nil)
+                    .help("Run the AI cleanup again on the raw transcript")
+                }
                 Button { self.copyFinalText(entry) } label: {
                     Label(
                         self.copiedEntryID == entry.id ? "Copied" : "Copy text",
@@ -697,6 +726,30 @@ struct TranscriptionHistoryView: View {
                 Text(value).font(self.theme.typography.bodyStrong).monospacedDigit()
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    /// Transcription is greedy and deterministic, so Redo re-runs only the AI cleanup, with today's dictation prompt and model.
+    private func canRedo(_ entry: TranscriptionHistoryEntry) -> Bool {
+        !entry.rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && DictationAIPostProcessingGate.isConfigured()
+    }
+
+    private func redoAICleanup(_ entry: TranscriptionHistoryEntry) {
+        self.redoingEntryID = entry.id
+        Task { @MainActor in
+            defer { self.redoingEntryID = nil }
+            let startedAt = Date()
+            do {
+                let result = try await DictationPostProcessingService.shared.process(entry.rawText)
+                self.historyStore.replaceAIResult(
+                    id: entry.id,
+                    processedText: result.text,
+                    processingModel: result.model,
+                    aiProcessingDurationMilliseconds: Int(Date().timeIntervalSince(startedAt) * 1000)
+                )
+            } catch {
+                self.redoError = error.localizedDescription
+            }
         }
     }
 
