@@ -77,13 +77,19 @@ final class NotchOverlayManager {
     var notchPanelWidth: CGFloat? { self.notch?.windowController?.window?.frame.width }
 
     /// A key notch panel keeps typing focus even when the frontmost app is re-activated.
-    /// Re-ordering it hands focus back to the app the user dictates into.
+    /// Deactivating hands focus back to the app the user dictates into. Re-ordering the panel would too,
+    /// but under the pointer it leaves hover tracking stale, so the Edit pill sticks or stops showing.
     /// Returns whether the panel had focus to release.
     @discardableResult
     func releaseNotchKeyFocus() -> Bool {
         guard let window = self.notch?.windowController?.window, window.isKeyWindow else { return false }
-        window.orderOut(nil)
-        window.orderFrontRegardless()
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+            // Dictating into FluidVoice itself: re-ordering lets AppKit give key back to its own window.
+            window.orderOut(nil)
+            window.orderFrontRegardless()
+        } else {
+            NSApp.deactivate()
+        }
         return true
     }
 

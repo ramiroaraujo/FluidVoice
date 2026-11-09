@@ -1304,7 +1304,6 @@ struct NotchExpandedView: View {
         .animation(.easeOut(duration: 0.12), value: self.isHoveringNotch)
         .animation(.easeOut(duration: 0.12), value: self.clipboardHasImage)
         .animation(.easeOut(duration: 0.12), value: self.clipboardHasLink)
-        .animation(.snappy(duration: 0.22), value: self.liveEdit.isOpen)
     }
 }
 
