@@ -315,7 +315,7 @@ final class VoiceModelDeletionTests: XCTestCase {
             ("unowned", .dictation), ("mismatch", .dictation), ("stale", .dictation),
             ("starting", .dictation), ("finalizing", .dictation), ("training", .dictation),
             ("draining", .dictation), ("recovering", .dictation),
-            ("idle UI", .dictation), ("cancel save", .dictation), ("processing", .dictation),
+            ("idle UI", .dictation), ("processing", .dictation),
         ]
         let settings = SettingsStore.shared
         let secondary = settings.dictationPromptSelection(for: .secondary)
@@ -333,7 +333,7 @@ final class VoiceModelDeletionTests: XCTestCase {
             if name == "stale" { asr.releaseExclusiveActivity(lease) }
             let finishDrain = name == "draining" || name == "recovering" ? asr.beginDictationBufferDrainForTesting(recovering: name == "recovering") : nil
             try await self.withDictationModeSwitchFixture(asr: asr, hasActiveMode: name != "idle UI") { view in
-                view.blockDictationModeSwitchForTesting(savingCancellation: name == "cancel save", processing: name == "processing")
+                view.blockDictationModeSwitchForTesting(processing: name == "processing")
                 let before = view.dictationModeSwitchStateForTesting
                 XCTAssertNil(view.beginDictationModeSwitchForTesting(selection: attempted), name)
                 await view.beginCommandModeSwitchForTesting()

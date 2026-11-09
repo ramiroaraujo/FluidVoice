@@ -311,7 +311,6 @@ struct ContentView: View {
     @State private var processingDictationLifecycleID: UInt64?
     @State private var pendingVoiceCommandLifecycleID: UInt64?
     @State private var cancelledOutputLifecycleID: UInt64?
-    @State private var isSavingCancelledRecording = false
 
     @State private var appear = false
     @State private var accessibilityEnabled = false
@@ -474,8 +473,7 @@ struct ContentView: View {
         await self.beginRewriteRecording()
     }
 
-    func blockDictationModeSwitchForTesting(savingCancellation: Bool = false, processing: Bool = false) {
-        self.isSavingCancelledRecording = savingCancellation
+    func blockDictationModeSwitchForTesting(processing: Bool = false) {
         self.processingDictationLifecycleID = processing ? self.overlayLifecycleID : nil
     }
 
@@ -4838,7 +4836,7 @@ struct ContentView: View {
 
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
     private func startRecording() -> Task<Void, Never>? {
-        guard !self.isSavingCancelledRecording, self.processingDictationLifecycleID == nil else { return nil }
+        guard self.processingDictationLifecycleID == nil else { return nil }
         // Browsing the demo must not send dictation to a previously focused app.
         guard !self.showsFluidIntelligenceDemo || (DictationPromptTestCoordinator.shared.isActive && !DictationPromptTestCoordinator.shared.isProcessing) else { return nil }
         guard !self.presentExclusiveActivityBlockIfNeeded() else { return nil }
@@ -5367,7 +5365,6 @@ struct ContentView: View {
     }
 
     private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {
-        if self.isSavingCancelledRecording { return .cancelled }
         var handled = false
 
         if DictionaryCorrectionOverlayController.shared.isPresented {
@@ -5392,36 +5389,18 @@ struct ContentView: View {
             self.cancelledOutputLifecycleID = lifecycleID
             handled = true
         } else if self.asr.isRunningOrStarting {
-            let preservesHistory = self.settings.saveTranscriptionHistory && self.asr.isRunning && !self.asr.isDictionaryTrainingCaptureActive
-                && (self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)
-                && !self.isRecordingForRewrite && !self.isRecordingForCommand
-                && self.currentDictationOutputRouteForHotkeyStop() != .onboardingSandbox
-                && !DictationPromptTestCoordinator.shared.isActive && !self.showsFluidIntelligenceDemo
-            if preservesHistory {
-                self.isSavingCancelledRecording = true
-                self.cancelledOutputLifecycleID = self.overlayLifecycleID
-                let manager = self.hotkeyManager
-                let stopLockStartedAt = manager?.traceStopLocked()
-                Task {
-                    defer {
-                        self.isSavingCancelledRecording = false
-                        if let stopLockStartedAt { manager?.traceStopUnlocked(since: stopLockStartedAt) }
-                    }
-                    await self.stopAndProcessTranscription(route: .historyOnly)
+            // Cancel discards the recording: no History entry, no AI cleanup, so the next recording can start at once.
+            let isOnboardingTryout = self.isOnboardingVoicePlaygroundStepActive
+            Task {
+                await self.asr.stopWithoutTranscription()
+                if isOnboardingTryout {
+                    AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .cancelled)
                 }
-            } else {
-                let isOnboardingTryout = self.isOnboardingVoicePlaygroundStepActive
-                Task {
-                    await self.asr.stopWithoutTranscription()
-                    if isOnboardingTryout {
-                        AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .cancelled)
-                    }
-                }
-                if self.activeRecordingMode == .edit || self.isRecordingForRewrite {
-                    self.rewriteModeService.clearState()
-                }
-                self.clearActiveRecordingMode()
             }
+            if self.activeRecordingMode == .edit || self.isRecordingForRewrite {
+                self.rewriteModeService.clearState()
+            }
+            self.clearActiveRecordingMode()
             self.cancelPrewarmDictationIfNeeded()
             self.cancelDictationContextCapture()
             handled = true
@@ -5636,7 +5615,7 @@ extension ContentView {
     }
 
     private func canBeginDictationRecording() -> Bool {
-        guard !self.isSavingCancelledRecording, self.processingDictationLifecycleID == nil else { return false }
+        guard self.processingDictationLifecycleID == nil else { return false }
         if self.canSwitchActiveDictationCaptureMode {
             self.clearOwnCaptureBlockErrorIfNeeded()
             return true
