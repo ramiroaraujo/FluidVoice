@@ -228,11 +228,11 @@ struct TranscriptionHistoryEntry: Codable, Identifiable, Equatable, Sendable {
         )
     }
 
-    /// A restore can hand an existing id different text, and the search index only
-    /// replaces a row whose revision rose. Bumping past the restored revision, the
+    /// A restore or a Redo can give an existing id different text, and the search index
+    /// only replaces a row whose revision rose. Bumping past the current revision, the
     /// indexed one and the wall clock keeps that true whichever backup the text came
     /// from, including one written before this field existed.
-    mutating func markRestored(over indexed: UInt64?, at date: Date = Date()) {
+    mutating func raiseSearchRevision(over indexed: UInt64?, at date: Date = Date()) {
         let now = UInt64(max(1, date.timeIntervalSince1970 * 1000))
         let base = max(now, self.searchRevision ?? 1, indexed ?? 1)
         self.searchRevision = base == .max ? .max : base + 1
@@ -384,6 +384,32 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.persist(upserts: [self.entries[index]])
     }
 
+    /// Redo: swaps in a fresh AI cleanup of the entry's raw text, keeping everything else.
+    func replaceAIResult(id: UUID, processedText: String, processingModel: String, aiProcessingDurationMilliseconds: Int) {
+        guard let index = self.entries.firstIndex(where: { $0.id == id }) else { return }
+        let old = self.entries[index]
+        var entry = TranscriptionHistoryEntry(
+            id: old.id,
+            timestamp: old.timestamp,
+            rawText: old.rawText,
+            processedText: processedText,
+            appName: old.appName,
+            windowTitle: old.windowTitle,
+            wasAIProcessed: true,
+            processingModel: processingModel,
+            transcriptionDurationMilliseconds: old.transcriptionDurationMilliseconds,
+            parakeetProcessingDurationMilliseconds: old.parakeetProcessingDurationMilliseconds,
+            aiProcessingDurationMilliseconds: aiProcessingDurationMilliseconds,
+            audio: old.audio,
+            isStarred: old.isStarred,
+            searchRevision: old.searchRevision
+        )
+        entry.raiseSearchRevision(over: nil)
+        self.entries[index] = entry
+        self.refreshTodaySummary()
+        self.persist(upserts: [entry])
+    }
+
     /// Delete a specific entry
     func deleteEntry(id: UUID) {
         self.invalidateAutomaticAudioBudgetMeasurement()
@@ -484,7 +510,7 @@ final class TranscriptionHistoryStore: ObservableObject {
         self.entries = payload
             .map { entry in
                 var entry = entry
-                entry.markRestored(over: indexed[entry.id])
+                entry.raiseSearchRevision(over: indexed[entry.id])
                 return entry
             }
             .sorted { $0.timestamp > $1.timestamp }
