@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 
 /// Live Edit: the hand-editable copy of the live dictation transcript in the notch.
 /// Recognizer updates and hand edits are merged, so speech keeps arriving while the user edits.
@@ -100,10 +101,13 @@ final class LiveEditSession: ObservableObject {
         NotchOverlayManager.shared.updateTranscriptionText(self.text)
     }
 
+    /// Animated as a transaction so DynamicNotchKit's notch shape, outside the content view, grows and shrinks with it.
+    private static let resizeAnimation = Animation.snappy(duration: 0.22)
+
     func open(caret: Int? = nil) {
         guard !self.isOpen, !self.text.isEmpty else { return }
         self.openingCaret = caret
-        self.isOpen = true
+        withAnimation(Self.resizeAnimation) { self.isOpen = true }
     }
 
     func requestStop(send: Bool) {
@@ -114,7 +118,7 @@ final class LiveEditSession: ObservableObject {
 
     func close(restoreFocus: Bool) {
         guard self.isOpen else { return }
-        self.isOpen = false
+        withAnimation(Self.resizeAnimation) { self.isOpen = false }
         if restoreFocus {
             self.returnFocusToTarget()
         } else {

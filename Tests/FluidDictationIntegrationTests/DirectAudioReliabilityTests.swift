@@ -953,7 +953,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(pipeline.contains("guard self.cancelledOutputLifecycleID != expectedOverlayLifecycleID else"))
     }
 
-    func testCancelHistoryWiringSharesHandlerAndKeepsDisposableCapturesPrivate() throws {
+    func testCancelDiscardsRecordingWithoutHistoryOrStopLock() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("Sources/Fluid/ContentView.swift"), encoding: .utf8)
         let callback = try XCTUnwrap(source.components(separatedBy: "self.hotkeyManager?.setCancelCallback {").last?.components(separatedBy: "// Re-insert").first)
@@ -961,15 +961,11 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertFalse(callback.contains("clearActiveRecordingMode()"), "Keep the selected style until the History pipeline snapshots it")
         let cancel = try XCTUnwrap(source.components(separatedBy: "private func handleCancelShortcutResult() -> GlobalHotkeyManager.CancelHandlingResult {").last?
             .components(separatedBy: "// MARK: - Model Management Helpers").first)
-        XCTAssertTrue(cancel.contains("if self.isSavingCancelledRecording { return .cancelled }"))
         XCTAssertTrue(cancel.contains("DictionaryCorrectionOverlayController.shared.dismiss()\n            return .dismissedOverlay"))
-        XCTAssertTrue(cancel.contains("self.settings.saveTranscriptionHistory"))
-        XCTAssertTrue(cancel.contains("!self.asr.isDictionaryTrainingCaptureActive"))
-        XCTAssertTrue(cancel.contains("!= .onboardingSandbox"))
-        XCTAssertTrue(cancel.contains("!DictationPromptTestCoordinator.shared.isActive"))
-        XCTAssertTrue(cancel.contains("stopAndProcessTranscription(route: .historyOnly)"))
-        XCTAssertTrue(cancel.contains("self.isSavingCancelledRecording = false"))
-        XCTAssertTrue(cancel.contains("manager?.traceStopUnlocked(since: stopLockStartedAt)"))
+        // A cancelled recording is discarded: transcribing and cleaning it for History held the hotkey lock for seconds.
+        XCTAssertTrue(cancel.contains("await self.asr.stopWithoutTranscription()"))
+        XCTAssertFalse(cancel.contains("stopAndProcessTranscription("))
+        XCTAssertFalse(cancel.contains("traceStopLocked()"))
         XCTAssertTrue(cancel.contains("resetModifierOnlyShortcutTracking(reason: .cancel)"))
         XCTAssertTrue(cancel.contains("self.menuBarManager.beginProcessingCompletionAndHideOverlay()"))
         XCTAssertTrue(cancel.contains("self.spokenSendAutoStopTask?.cancel()"))
@@ -986,8 +982,6 @@ final class DirectAudioReliabilityTests: XCTestCase {
         let end = try XCTUnwrap(source.range(of: "// MARK: - Model Management Helpers", range: start.upperBound..<source.endIndex))
         let cancel = String(source[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(cancel.contains("self.cancelledOutputLifecycleID = lifecycleID"))
-        XCTAssertTrue(cancel.contains("(self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode)"))
-        XCTAssertTrue(cancel.contains("!self.isRecordingForRewrite && !self.isRecordingForCommand"))
         let edit = try XCTUnwrap(source.components(separatedBy: "private func processRewriteWithVoiceInstruction(").last?.components(separatedBy: "private func setActiveRecordingMode(").first)
         XCTAssertTrue(edit.contains("self.cancelledOutputLifecycleID != lifecycleID"))
         XCTAssertEqual(edit.components(separatedBy: "isOutputValid: isOutputValid").count - 1, 2)
