@@ -2974,7 +2974,10 @@ struct ContentView: View {
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
         let request = isDictationCall
-            ? DictationPromptRequest(promptText: promptText, transcript: inputText)
+            ? DictationPromptRequest(
+                promptText: promptText, transcript: inputText,
+                vocabulary: await DictationPostProcessingService.dictionaryVocabulary()
+            )
             : DictationPromptRequest(systemPrompt: promptText, userContent: inputText)
         let systemPrompt = request.systemPrompt
         let userMessageContent = request.userContent

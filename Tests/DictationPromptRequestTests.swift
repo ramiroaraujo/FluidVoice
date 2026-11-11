@@ -43,6 +43,14 @@ enum DictationPromptRequestTests {
         let first = DictationPromptRequest(promptText: prompt, transcript: "first")
         _ = DictationPromptRequest(promptText: "other", transcript: "second")
         precondition(first.userContent == DictationPromptRequest(promptText: prompt, transcript: "first").userContent)
-        print("PASS: dictation request roles, JSON boundaries, templates, blank/custom prompts, chat compatibility, and stateless calls")
+        let words = ["sermorelin", " Worktree ", "worktree", "", "line one\nline two", String(repeating: "x", count: 41), "nad+"]
+        let withVocabulary = DictationPromptRequest(promptText: prompt, transcript: "hi", vocabulary: words)
+        precondition(withVocabulary.systemPrompt.hasPrefix(prompt + "\n\nVocabulary: "))
+        precondition(withVocabulary.systemPrompt.hasSuffix("\nTerms: sermorelin, Worktree, nad+"))
+        precondition(DictationPromptRequest(promptText: prompt, transcript: "hi", vocabulary: [" ", "a\nb"]).systemPrompt == prompt)
+        precondition(DictationPromptRequest(promptText: " ", transcript: "hi", vocabulary: words).messages.count == 1)
+        let templatedVocabulary = DictationPromptRequest(promptText: "Fix: ${transcript}", transcript: "hi", vocabulary: ["pnpm"])
+        precondition(templatedVocabulary.systemPrompt.isEmpty && templatedVocabulary.userContent.hasPrefix("Fix: hi\n\nVocabulary: "))
+        print("PASS: dictation request roles, JSON boundaries, templates, blank/custom prompts, chat compatibility, stateless calls, and vocabulary")
     }
 }

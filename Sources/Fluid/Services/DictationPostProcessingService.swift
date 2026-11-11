@@ -236,6 +236,12 @@ final class DictationPostProcessingService {
 
     private init() {}
 
+    /// Spellings the user taught FluidVoice: Custom Words and replacement targets.
+    static func dictionaryVocabulary() async -> [String] {
+        let customWords = (try? await ParakeetVocabularyStore.readSearchTerms())?.map(\.text) ?? []
+        return customWords + SettingsStore.shared.customDictionaryEntries.map(\.replacement)
+    }
+
     struct Result {
         let text: String
         let providerID: String
@@ -306,7 +312,9 @@ final class DictationPostProcessingService {
         }
 
         let promptText = settings.effectiveDictationSystemPrompt(for: dictationSlot, appBundleID: nil)
-        let request = DictationPromptRequest(promptText: promptText, transcript: trimmed)
+        let request = DictationPromptRequest(
+            promptText: promptText, transcript: trimmed, vocabulary: await Self.dictionaryVocabulary()
+        )
 
         guard !resolved.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AIProcessingError.missingModel(provider: resolved.providerKey)
