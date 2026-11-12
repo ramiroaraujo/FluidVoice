@@ -51,6 +51,23 @@ enum DictationPromptRequestTests {
         precondition(DictationPromptRequest(promptText: " ", transcript: "hi", vocabulary: words).messages.count == 1)
         let templatedVocabulary = DictationPromptRequest(promptText: "Fix: ${transcript}", transcript: "hi", vocabulary: ["pnpm"])
         precondition(templatedVocabulary.systemPrompt.isEmpty && templatedVocabulary.userContent.hasPrefix("Fix: hi\n\nVocabulary: "))
-        print("PASS: dictation request roles, JSON boundaries, templates, blank/custom prompts, chat compatibility, stateless calls, and vocabulary")
+        let withContext = DictationPromptRequest(promptText: prompt, transcript: "hi", vocabulary: ["pnpm"], context: "Conversation context: x")
+        precondition(withContext.systemPrompt.hasPrefix(prompt + "\n\nVocabulary: ") && withContext.systemPrompt.hasSuffix("\n\nConversation context: x"))
+        precondition(DictationPromptRequest(promptText: prompt, transcript: "hi", context: "").systemPrompt == prompt)
+        precondition(DictationPromptRequest(promptText: " ", transcript: "hi", context: "ctx").messages.count == 1)
+        precondition(DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: " ", screenLines: []) == nil)
+        let lines = (1...2000).map { "line \($0) le cobras menos de lo q le holdeas" }
+        let screen = DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: "No, en la gran", screenLines: lines)!
+        precondition(screen.hasPrefix("Screen context: text read from the Slack window"))
+        precondition(screen.contains("line 2000 le cobras") && !screen.contains("line 1 le cobras"), "keeps the bottom lines")
+        precondition(screen.count < DictationPromptRequest.maxScreenContextCharacters + 1000)
+        precondition(screen.contains("<already_typed>\nNo, en la gran\n</already_typed>"))
+        let slack = DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: nil, screenLines: [
+            "Federico Caramelli: la plata la tenes. 12:00 PM.", "Today at 12:00:43 PM", "la plata la tenes", "la plata la tenes otra vez",
+        ])!
+        precondition(slack.contains("12:00 PM.\nToday at 12:00:43 PM\nla plata la tenes otra vez\n</screen_text>"), slack)
+        let typedOnly = DictationPromptRequest.screenContextInstruction(appName: "Notes", textBeforeCursor: "Dear", screenLines: nil)!
+        precondition(!typedOnly.contains("<screen_text>"))
+        print("PASS: dictation request roles, JSON boundaries, templates, blank/custom prompts, chat compatibility, stateless calls, vocabulary, and context")
     }
 }

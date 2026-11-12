@@ -365,6 +365,7 @@ struct ContentView: View {
     @State private var recordingAppInfo: (name: String, bundleId: String, windowTitle: String)? = nil
     @State private var recordingPrecedingText: String = ""
     @State private var dictationContextCapture: DictationContextCapture?
+    @State private var orcaContextCapture: OrcaContextCapture?
     @State private var recordingFocusTarget: TypingService.CapturedFocusTarget? = nil
 
     // Command Mode State
@@ -2569,37 +2570,48 @@ struct ContentView: View {
         self.captureRecordingFormattingContextIfNeeded()
     }
 
-    /// Starts reading the text around the cursor when the dictation model was
-    /// trained to use it. Every other model skips this entirely.
+    /// Starts reading the text around the cursor for a Fluid model trained to use it, or for a
+    /// cleanup model that takes it in its prompt. An Orca terminal gets its session context instead.
     private func startDictationContextCaptureIfNeeded(for slot: SettingsStore.DictationShortcutSlot) {
         self.cancelDictationContextCapture()
+        let usesAI = DictationAIPostProcessingGate.isConfigured(for: slot, appBundleID: self.recordingAppInfo?.bundleId)
+        if usesAI {
+            self.orcaContextCapture = OrcaContextCapture.start(targetPID: NotchContentState.shared.recordingTargetContext?.pid)
+        }
         let route = DictationProviderRoute.resolve(
             settings: .shared,
             dictationSlot: slot,
             appBundleID: self.recordingAppInfo?.bundleId
         )
-        guard self.settings.dictationScreenContextEnabled, route.usesPrivateAI,
-              PrivateAIIntegrationService.readsDictationContext(model: route.model),
+        guard self.settings.dictationScreenContextEnabled,
+              Self.readsScreenContext(route: route) && (route.usesPrivateAI || usesAI && self.orcaContextCapture == nil),
               let target = NotchContentState.shared.recordingTargetContext,
               target.pid != ProcessInfo.processInfo.processIdentifier
         else { return }
         self.dictationContextCapture = DictationContextCapture.start(
             target: target,
             textBeforeCursor: self.settings.needsDictationFormattingContext ? self.recordingPrecedingText : nil,
-            settings: .shared
+            settings: .shared,
+            keepsBottomLines: !route.usesPrivateAI
         )
     }
 
     private func cancelDictationContextCapture() {
         self.dictationContextCapture?.cancel()
         self.dictationContextCapture = nil
+        self.orcaContextCapture?.cancel()
+        self.orcaContextCapture = nil
+    }
+
+    /// Fluid models read screen context only when trained for it; cleanup models get it as prompt text.
+    private static func readsScreenContext(route: DictationProviderRoute) -> Bool {
+        !route.usesPrivateAI || PrivateAIIntegrationService.readsDictationContext(model: route.model)
     }
 
     private func attachDictationContext(_ capture: DictationContextCapture, to stopSnapshot: inout DictationStopSnapshot?) async {
-        // Context must belong to the exact destination field and a supported local model.
+        // Context must belong to the exact destination field and a model that reads it.
         guard self.settings.dictationScreenContextEnabled,
-              let snapshot = stopSnapshot, snapshot.usesAI, snapshot.route.usesPrivateAI,
-              PrivateAIIntegrationService.readsDictationContext(model: snapshot.route.model),
+              let snapshot = stopSnapshot, snapshot.usesAI, Self.readsScreenContext(route: snapshot.route),
               let target = snapshot.target, capture.matches(target)
         else {
             capture.cancel()
@@ -2612,6 +2624,23 @@ struct ContentView: View {
         self.appBench(
             "dictation_context waitMs=\(Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())) "
                 + "beforeCursorChars=\(context?.textBeforeCursor?.count ?? 0) screenLines=\(context?.screenText?.count ?? 0)"
+        )
+    }
+
+    private func attachOrcaContext(_ capture: OrcaContextCapture, to stopSnapshot: inout DictationStopSnapshot?) async {
+        // The text must still be going to Orca, and to the pane the context was read from.
+        guard let snapshot = stopSnapshot, snapshot.usesAI, snapshot.target?.pid == capture.pid else {
+            capture.cancel()
+            return
+        }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let reading = await capture.reading(timeout: .milliseconds(300))
+        stopSnapshot?.terminalContext = reading?.block
+        // Sizes only: the conversation and typed text are never logged.
+        self.appBench(
+            "orca_context waitMs=\(Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())) "
+                + "found=\(reading != nil) exchanges=\(reading?.exchanges ?? 0) typedChars=\(reading?.typedCharacters ?? 0) "
+                + "blockChars=\(reading?.block.count ?? 0)"
         )
     }
 
@@ -2976,7 +3005,12 @@ struct ContentView: View {
         let request = isDictationCall
             ? DictationPromptRequest(
                 promptText: promptText, transcript: inputText,
-                vocabulary: await DictationPostProcessingService.dictionaryVocabulary()
+                vocabulary: await DictationPostProcessingService.dictionaryVocabulary(),
+                context: stopSnapshot?.terminalContext ?? stopSnapshot?.typingContext.flatMap {
+                    DictationPromptRequest.screenContextInstruction(
+                        appName: appInfo.name, textBeforeCursor: $0.textBeforeCursor, screenLines: $0.screenText
+                    )
+                }
             )
             : DictationPromptRequest(systemPrompt: promptText, userContent: inputText)
         let systemPrompt = request.systemPrompt
@@ -3193,9 +3227,13 @@ struct ContentView: View {
     // swiftlint:disable:next function_body_length
     private func processStoppedTranscription(route: DictationOutputRoute, pipelineID: String, toggleStopRequestedAt: TimeInterval?) async {
         let contextCapture = self.dictationContextCapture
+        let orcaCapture = self.orcaContextCapture
+        orcaCapture?.beginStopCheck()
         defer {
             contextCapture?.cancel()
             if self.dictationContextCapture === contextCapture { self.dictationContextCapture = nil }
+            orcaCapture?.cancel()
+            if self.orcaContextCapture === orcaCapture { self.orcaContextCapture = nil }
         }
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             MeetingSummaryActivityCoordinator.presentBusyError()
@@ -3263,6 +3301,11 @@ struct ContentView: View {
            self.cancelledOutputLifecycleID != expectedOverlayLifecycleID, !Task.isCancelled
         {
             await self.attachDictationContext(contextCapture, to: &stopSnapshot)
+        }
+        if let orcaCapture, self.overlayLifecycleID == expectedOverlayLifecycleID,
+           self.cancelledOutputLifecycleID != expectedOverlayLifecycleID, !Task.isCancelled
+        {
+            await self.attachOrcaContext(orcaCapture, to: &stopSnapshot)
         }
         let audioSnapshot = self.asr.consumeLastCompletedAudioSnapshot()
         let dictionaryLearningRecording = self.asr.consumeDictionaryLearningRecording()
