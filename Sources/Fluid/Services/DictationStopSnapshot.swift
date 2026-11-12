@@ -20,6 +20,9 @@ struct DictationStopSnapshot {
     let readsContextFromFocusedField: Bool
     /// Read at recording start for a context-trained model; nil otherwise.
     var typingContext: DictationTypingContext?
+    /// Recent conversation and typed text of the Claude Code session in the focused Orca
+    /// terminal, for the AI cleanup prompt; nil elsewhere.
+    var terminalContext: String?
 
     /// Fills the fields that need WindowServer or Accessibility round-trips.
     /// Called after the microphone has stopped so they never delay it.

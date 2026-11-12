@@ -19,7 +19,7 @@ struct DictationScreenContextSettings: View {
         VStack(alignment: .leading, spacing: 12) {
             FluidManagementRow(
                 title: "Use my active screen to improve dictation accuracy",
-                detail: "Supported model: Fluid-1.1 Splash. Everything is processed on your device."
+                detail: "Fluid-1.1 Splash reads it on your device. A cloud AI cleanup model receives the window's text with each dictation."
             ) {
                 Toggle("Use my active screen to improve dictation accuracy", isOn: self.enabledBinding)
                     .toggleStyle(.switch)

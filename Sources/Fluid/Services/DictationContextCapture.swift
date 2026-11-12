@@ -59,7 +59,8 @@ final nonisolated class DictationContextCapture: @unchecked Sendable {
     static func start(
         target: TypingService.RecordingTargetContext,
         textBeforeCursor: String?,
-        settings: SettingsStore
+        settings: SettingsStore,
+        keepsBottomLines: Bool = false
     ) -> DictationContextCapture? {
         guard settings.dictationScreenContextEnabled, AXIsProcessTrusted() else { return nil }
         let request = DictationContextReader.Request(
@@ -68,7 +69,8 @@ final nonisolated class DictationContextCapture: @unchecked Sendable {
             window: target.window,
             element: target.element,
             textBeforeCursor: textBeforeCursor,
-            isEnabled: settings.dictationScreenContextEnabled
+            isEnabled: settings.dictationScreenContextEnabled,
+            keepsBottomLines: keepsBottomLines
         )
         let task = Task.detached(priority: .userInitiated) {
             await DictationContextReader.read(request)
@@ -177,6 +179,9 @@ nonisolated enum DictationContextReader {
         /// Already read for dictation formatting; nil reads it here.
         let textBeforeCursor: String?
         let isEnabled: Bool
+        /// Keep the window's last lines rather than its first: a cleanup prompt wants the
+        /// latest chat messages and the input, which sit at the bottom.
+        var keepsBottomLines = false
     }
 
     static let maxTextBeforeCursorCharacters = 2000
@@ -224,7 +229,7 @@ nonisolated enum DictationContextReader {
         let textBeforeCursor = (request.textBeforeCursor ?? request.element.flatMap(self.textBeforeCursor(in:)))
             .map { String($0.suffix(self.maxTextBeforeCursorCharacters)) }
 
-        var lines = LineCollector()
+        var lines = LineCollector(keepsLast: request.keepsBottomLines)
         let windows = self.windows(for: request)
         for window in windows where !Task.isCancelled {
             self.collectAccessibilityText(in: window, into: &lines)
@@ -650,11 +655,14 @@ nonisolated struct EditModeWindowLines {
 
 /// Screen lines in reading order, without repeats, within the size caps.
 private nonisolated struct LineCollector {
+    /// Keeps reading past the limit and drops the oldest lines; the read still ends at the
+    /// element and time budgets.
+    var keepsLast = false
     private(set) var lines: [String] = []
     private(set) var wordCount = 0
     private var seen: Set<String> = []
 
-    var isFull: Bool { self.lines.count >= DictationContextReader.maxScreenLines }
+    var isFull: Bool { !self.keepsLast && self.lines.count >= DictationContextReader.maxScreenLines }
 
     mutating func add(_ text: String, limit: Int = .max) {
         var added = 0
@@ -665,6 +673,9 @@ private nonisolated struct LineCollector {
             self.lines.append(line)
             self.wordCount += line.split(whereSeparator: \.isWhitespace).count
             added += 1
+            if self.keepsLast, self.lines.count > DictationContextReader.maxScreenLines {
+                self.lines.removeFirst()
+            }
         }
     }
 }

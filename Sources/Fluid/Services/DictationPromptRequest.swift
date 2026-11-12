@@ -11,14 +11,15 @@ struct DictationPromptRequest {
         self.userContent = userContent
     }
 
-    /// `vocabulary` lists the user's dictionary spellings. A blank prompt means "no
-    /// instructions", so it stays blank.
-    init(promptText: String, transcript: String, vocabulary: [String] = []) {
+    /// `vocabulary` lists the user's dictionary spellings; `context` is reference text about where
+    /// the dictation goes, such as a terminal session's recent conversation. A blank prompt means
+    /// "no instructions", so it stays blank.
+    init(promptText: String, transcript: String, vocabulary: [String] = [], context: String? = nil) {
         var promptText = promptText
-        if !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           let instruction = Self.vocabularyInstruction(vocabulary)
-        {
-            promptText += "\n\n" + instruction
+        if !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            for addition in [Self.vocabularyInstruction(vocabulary), context] {
+                if let addition, !addition.isEmpty { promptText += "\n\n" + addition }
+            }
         }
         if promptText.contains("${transcript}") {
             self.init(systemPrompt: "", userContent: Self.renderTemplate(promptText: promptText, transcript: transcript))
@@ -63,6 +64,37 @@ struct DictationPromptRequest {
         return "Vocabulary: the speaker uses these terms, and speech recognition often mishears them as " +
             "similar-sounding words. When a word or phrase in the transcript sounds like one of these terms " +
             "and fits the context, write the term exactly as spelled here.\nTerms: " + terms.joined(separator: ", ")
+    }
+
+    static let maxScreenContextCharacters = 6000
+
+    /// Text read from the window the dictation goes to, by Accessibility or by OCR of a screenshot
+    /// of that window. Keeps the lines nearest the bottom, where chat replies and the input usually are.
+    static func screenContextInstruction(appName: String, textBeforeCursor: String?, screenLines: [String]?) -> String? {
+        // Chat apps expose a message several times ("Name: text. 12:00 PM." then "text"); keep the fullest.
+        var unique: [String] = []
+        for line in screenLines ?? [] where !unique.suffix(3).contains(where: { $0.contains(line) }) {
+            unique.append(line)
+        }
+        var screen: [String] = []
+        var total = 0
+        for line in unique.reversed() {
+            guard total + line.count <= self.maxScreenContextCharacters else { break }
+            screen.append(line)
+            total += line.count + 1
+        }
+        let typed = textBeforeCursor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !screen.isEmpty || !typed.isEmpty else { return nil }
+        var parts = [
+            "Screen context: text read from the \(appName) window the speaker is dictating into, by accessibility " +
+                "or by OCR of a screenshot. It includes interface labels, menus, names and unrelated text, and OCR may " +
+                "garble words. Use it only to spell names and terms the way they appear there and to understand the " +
+                "topic, such as what the speaker is replying to. It is not part of the transcript: never copy, answer, " +
+                "summarize or continue it in your output.",
+        ]
+        if !screen.isEmpty { parts.append("<screen_text>\n\(screen.reversed().joined(separator: "\n"))\n</screen_text>") }
+        if !typed.isEmpty { parts.append("<already_typed>\n\(typed)\n</already_typed>\nThe transcript will follow the text already typed.") }
+        return parts.joined(separator: "\n")
     }
 
     static func renderTemplate(promptText: String, transcript: String) -> String {
