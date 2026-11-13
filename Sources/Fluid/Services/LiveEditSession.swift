@@ -26,6 +26,10 @@ final class LiveEditSession: ObservableObject {
     private(set) var links: [String] = []
     /// The clipboard's change count when its image or link was last pasted; the Paste buttons hide until it changes.
     @Published private(set) var pastedClipboardChangeCount: Int?
+    /// What was last added after the newest words; a Shift+Enter while the text still ends with it breaks the line after it.
+    private var lastAppended: String?
+    /// Adds the Shift+Enter line breaks and the new-line cursor to the text the overlay shows. Set by MenuBarManager.
+    var previewText: (String) -> String = { $0 }
 
     var hasEdits: Bool { self.text != self.recognizedText }
 
@@ -84,6 +88,13 @@ final class LiveEditSession: ObservableObject {
         self.appendAtEnd(link)
     }
 
+    /// ⇧⌘V while recording: the clipboard's image, link or text goes after the newest words.
+    func pasteClipboardAtEnd() {
+        if let insertion = self.clipboardImagePlaceholders() ?? self.clipboardLink() { return self.appendAtEnd(insertion) }
+        guard let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return }
+        self.appendAtEnd(text)
+    }
+
     /// Hold to Capture Screenshot: the screenshot goes after the newest words, like the Paste Image button.
     func appendScreenshot(at path: String) {
         self.appendAtEnd(self.placeholders(forImagesAt: [path]))
@@ -98,7 +109,17 @@ final class LiveEditSession: ObservableObject {
 
     private func appendAtEnd(_ insertion: String) {
         self.text += (self.text.last?.isWhitespace ?? true ? "" : " ") + insertion
-        NotchOverlayManager.shared.updateTranscriptionText(self.text)
+        self.lastAppended = insertion
+        NotchOverlayManager.shared.updateTranscriptionText(self.previewText(self.text))
+    }
+
+    /// Shift+Enter right after a paste: the break is typed after the pasted item, since no spoken word
+    /// marks that spot in the audio. Returns false once speech has followed the paste.
+    func breakLineAfterPaste() -> Bool {
+        guard let lastAppended, self.text.trimmingCharacters(in: .newlines).hasSuffix(lastAppended) else { return false }
+        self.text += "\n"
+        NotchOverlayManager.shared.updateTranscriptionText(self.previewText(self.text))
+        return true
     }
 
     /// Animated as a transaction so DynamicNotchKit's notch shape, outside the content view, grows and shrinks with it.
@@ -160,6 +181,7 @@ final class LiveEditSession: ObservableObject {
         self.sendRequested = false
         self.imagePaths = []
         self.links = []
+        self.lastAppended = nil
         self.pastedClipboardChangeCount = nil
     }
 }

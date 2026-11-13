@@ -1297,7 +1297,15 @@ final class GlobalHotkeyManager: NSObject {
                SettingsStore.shared.shiftEnterLineBreaksEnabled, self.asrService.isRunning, !LiveEditSession.shared.isOpen
             {
                 self.markOtherInputDuringModifierOnly()
-                if !isAutorepeat { self.asrService.markLineBreak() }
+                if !isAutorepeat, !LiveEditSession.shared.breakLineAfterPaste() { self.asrService.markLineBreak() }
+                return nil
+            }
+            // Shift+Command+V while recording pastes the clipboard after the newest words; the app never sees it.
+            if keyCode == 9, eventModifiers.intersection(HotkeyShortcut.relevantModifierMask) == [.shift, .command],
+               SettingsStore.shared.shiftCommandVPasteEnabled, self.asrService.isRunning
+            {
+                self.markOtherInputDuringModifierOnly()
+                if !isAutorepeat { LiveEditSession.shared.pasteClipboardAtEnd() }
                 return nil
             }
             // The application owns cancellation output; fallback managers only discard capture.
