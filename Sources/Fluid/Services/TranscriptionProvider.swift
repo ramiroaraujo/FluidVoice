@@ -114,19 +114,23 @@ struct ASRTranscriptionResult {
     let parakeetProcessingDurationMilliseconds: Int?
     let pronunciationEnrollment: PronunciationEnrollmentCapture?
     let dictionaryLearningAlignment: DictionaryLearningAlignment?
+    /// The recognizer's timed words before any correction; empty when the provider has no timings.
+    let words: [ASRWordTiming]
 
     init(
         text: String,
         confidence: Float = 1.0,
         parakeetProcessingDurationMilliseconds: Int? = nil,
         pronunciationEnrollment: PronunciationEnrollmentCapture? = nil,
-        dictionaryLearningAlignment: DictionaryLearningAlignment? = nil
+        dictionaryLearningAlignment: DictionaryLearningAlignment? = nil,
+        words: [ASRWordTiming] = []
     ) {
         self.text = text
         self.confidence = confidence
         self.parakeetProcessingDurationMilliseconds = parakeetProcessingDurationMilliseconds
         self.pronunciationEnrollment = pronunciationEnrollment
         self.dictionaryLearningAlignment = dictionaryLearningAlignment
+        self.words = words
     }
 }
 

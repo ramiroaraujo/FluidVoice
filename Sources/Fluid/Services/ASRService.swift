@@ -651,6 +651,13 @@ final class ASRService: ObservableObject {
     private(set) var lastStopOutcome: ASRStopOutcome = .empty
     private var lastFinalTranscriptionDurationMs: Int?
     private var lastFinalParakeetProcessingMs: Int?
+    /// Audio sample counts at each Shift+Enter in the current recording.
+    private var lineBreakSampleCounts: [Int] = []
+    /// Where the last dictation's Shift+Enter breaks go, for the pipeline to apply after text processing.
+    private(set) var lastLineBreaks: DictationLineBreaks?
+    /// The same breaks placed in the live preview by its own word timings.
+    @Published private(set) var previewLineBreaks: DictationLineBreaks?
+    private var previewWords: [ASRWordTiming] = []
     private(set) var dictionaryTrainingAudioGeneration = 0
 
     @Published private(set) var isStarting: Bool = false { // Guard against re-entrant start() calls
@@ -2918,6 +2925,9 @@ final class ASRService: ObservableObject {
             attemptID: readinessAttemptID
         )
         self.benchmarkRecordingStartedAt = Date().timeIntervalSince1970
+        self.lineBreakSampleCounts = []
+        self.previewWords = []
+        self.previewLineBreaks = nil
         self.benchmarkStreamingChunkIndex = 0
         self.benchmarkCompletedStreamingChunks = 0
         self.benchmarkLastChunkSampleCount = 0
@@ -3481,6 +3491,7 @@ final class ASRService: ObservableObject {
         self.lastStopOutcome = .empty
         self.lastFinalTranscriptionDurationMs = nil
         self.lastFinalParakeetProcessingMs = nil
+        self.lastLineBreaks = nil
         if forDictionaryTraining || self.isDictionaryTrainingCaptureActive {
             self.lastDictionaryTrainingResult = nil
         }
@@ -3791,6 +3802,10 @@ final class ASRService: ObservableObject {
             if !useDictionaryTrainingPath {
                 self.lastFinalTranscriptionDurationMs = finalElapsedMs
                 self.lastFinalParakeetProcessingMs = result.parakeetProcessingDurationMilliseconds
+                self.lastLineBreaks = DictationLineBreaks(words: result.words, breakSeconds: self.lineBreakSampleCounts.map { Double($0) / 16_000 })
+                if !self.lineBreakSampleCounts.isEmpty {
+                    DebugLogger.shared.info("Shift+Enter line breaks | presses=\(self.lineBreakSampleCounts.count) | timedWords=\(result.words.count) | positions=\(self.lastLineBreaks?.positions ?? [])", source: "ASRService")
+                }
             }
             let finalAudioSeconds = Double(pcm.count) / 16_000.0
             let finalRTF = finalAudioSeconds > 0 ? (Double(finalElapsedMs) / 1000.0) / finalAudioSeconds : 0
@@ -4381,6 +4396,18 @@ final class ASRService: ObservableObject {
         return try await self.executorForMeetingTranscription().run { [provider] in
             try await provider.transcribeFile(at: fileURL)
         }
+    }
+
+    /// Shift+Enter while recording: a line break at this point of the audio.
+    func markLineBreak() {
+        guard self.isRunning else { return }
+        self.lineBreakSampleCounts.append(self.audioBuffer.count)
+        self.refreshPreviewLineBreaks()
+    }
+
+    private func refreshPreviewLineBreaks() {
+        guard !self.lineBreakSampleCounts.isEmpty else { return }
+        self.previewLineBreaks = DictationLineBreaks(words: self.previewWords, breakSeconds: self.lineBreakSampleCounts.map { Double($0) / 16_000 })
     }
 
     func stopWithoutTranscription() async {
@@ -7258,6 +7285,8 @@ final class ASRService: ObservableObject {
                 let updatedText = self.smartDiffUpdate(previous: self.previousFullTranscription, current: newText)
                 self.partialTranscription = updatedText
                 self.previousFullTranscription = newText
+                self.previewWords = result.words
+                self.refreshPreviewLineBreaks()
 
                 DebugLogger.shared.debug("✅ Streaming: '\(updatedText)' (\(String(format: "%.2f", duration))s)", source: "ASRService")
             }

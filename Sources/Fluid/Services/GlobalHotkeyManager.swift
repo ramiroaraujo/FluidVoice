@@ -1292,6 +1292,14 @@ final class GlobalHotkeyManager: NSObject {
                 LiveEditScreenshot.shared.cancel()
                 return nil
             }
+            // Shift+Enter (Return or keypad Enter) while recording marks a line break; the app never sees it.
+            if keyCode == 36 || keyCode == 76, eventModifiers.intersection(HotkeyShortcut.relevantModifierMask) == .shift,
+               SettingsStore.shared.shiftEnterLineBreaksEnabled, self.asrService.isRunning, !LiveEditSession.shared.isOpen
+            {
+                self.markOtherInputDuringModifierOnly()
+                if !isAutorepeat { self.asrService.markLineBreak() }
+                return nil
+            }
             // The application owns cancellation output; fallback managers only discard capture.
             // A plain Esc closes the Live Edit editor instead of cancelling.
             let closesLiveEdit = LiveEditSession.shared.isOpen && keyCode == 53 &&

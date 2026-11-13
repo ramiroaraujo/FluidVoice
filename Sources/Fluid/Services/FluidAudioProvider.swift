@@ -747,7 +747,7 @@ final class FluidAudioProvider: TranscriptionProvider {
             """,
             source: "ASRBenchmark"
         )
-        return ASRTranscriptionResult(text: result.text, confidence: result.confidence)
+        return ASRTranscriptionResult(text: result.text, confidence: result.confidence, words: Self.makeWordTimings(from: result.tokenTimings ?? []))
     }
 
     /// Returns the first sample not yet accepted by the active incremental session.
@@ -812,7 +812,7 @@ final class FluidAudioProvider: TranscriptionProvider {
                 startedAt: startedAt,
                 inputSampleCount: newSamples.count
             )
-            return ASRTranscriptionResult(text: result.text, confidence: result.confidence)
+            return ASRTranscriptionResult(text: result.text, confidence: result.confidence, words: Self.makeWordTimings(from: result.tokenTimings ?? []))
         } catch {
             if self.recordingGeneration == generation { self.resetIncrementalSession() }
             try self.requireCurrentRecording(generation)
@@ -1068,7 +1068,8 @@ final class FluidAudioProvider: TranscriptionProvider {
             text: text,
             confidence: result.confidence,
             parakeetProcessingDurationMilliseconds: Self.parakeetProcessingMilliseconds(for: result),
-            dictionaryLearningAlignment: alignment
+            dictionaryLearningAlignment: alignment,
+            words: Self.makeWordTimings(from: result.tokenTimings ?? [])
         )
     }
 
@@ -1295,7 +1296,8 @@ final class FluidAudioProvider: TranscriptionProvider {
                         text: result.text,
                         confidence: result.confidence,
                         parakeetProcessingDurationMilliseconds: Self.parakeetProcessingMilliseconds(for: result),
-                        dictionaryLearningAlignment: self.learningAlignment(for: result)
+                        dictionaryLearningAlignment: self.learningAlignment(for: result),
+                        words: Self.makeWordTimings(from: result.tokenTimings ?? [])
                     ),
                     result.tokenTimings,
                     textMayBeCorrected
@@ -1348,7 +1350,8 @@ final class FluidAudioProvider: TranscriptionProvider {
                     text: corrected,
                     confidence: result.confidence,
                     parakeetProcessingDurationMilliseconds: Self.parakeetProcessingMilliseconds(for: result),
-                    dictionaryLearningAlignment: alignment
+                    dictionaryLearningAlignment: alignment,
+                    words: Self.makeWordTimings(from: result.tokenTimings ?? [])
                 ),
                 result.tokenTimings,
                 textMayBeCorrected

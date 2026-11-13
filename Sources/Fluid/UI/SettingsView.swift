@@ -782,6 +782,16 @@ struct SettingsView: View {
                                         Divider().opacity(0.2)
 
                                         self.optionToggleRow(
+                                            title: "Shift+Enter Line Breaks",
+                                            description: "Press Shift+Enter while dictating to start a new line there. The app you dictate into doesn't receive the key.",
+                                            isOn: Binding(
+                                                get: { self.settings.shiftEnterLineBreaksEnabled },
+                                                set: { self.settings.shiftEnterLineBreaksEnabled = $0 }
+                                            )
+                                        )
+                                        Divider().opacity(0.2)
+
+                                        self.optionToggleRow(
                                             title: "Save Transcription History",
                                             description: "Save transcriptions for stats tracking. Disable for privacy.",
                                             isOn: Binding(

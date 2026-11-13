@@ -6131,6 +6131,7 @@ private extension SettingsStore {
         static let copyTranscriptionToClipboard = "CopyTranscriptionToClipboard"
         static let textInsertionMode = "TextInsertionMode"
         static let spokenSendEnabled = "SpokenSendEnabled"
+        static let shiftEnterLineBreaksEnabled = "ShiftEnterLineBreaksEnabled"
         static let spokenSendImmediatelyEnabled = "SpokenSendImmediatelyEnabled"
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
@@ -6369,6 +6370,15 @@ extension SettingsStore {
         set {
             objectWillChange.send()
             self.defaults.set(newValue?.rawValue, forKey: Keys.holdToSendModifier)
+        }
+    }
+
+    /// Shift+Enter while recording adds a line break to the transcript instead of reaching the app.
+    var shiftEnterLineBreaksEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.shiftEnterLineBreaksEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.shiftEnterLineBreaksEnabled)
         }
     }
 

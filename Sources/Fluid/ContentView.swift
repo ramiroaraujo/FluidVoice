@@ -3403,7 +3403,7 @@ struct ContentView: View {
             wasArmed: self.spokenSendArming.wasArmed
         )
         self.updateSpokenSendIndicatorForFinalParse(shouldSend: spokenSendParse.shouldSend)
-        let normalizedTranscribedText = spokenSendParse.text
+        let normalizedTranscribedText = asr.lastLineBreaks?.apply(to: spokenSendParse.text) ?? spokenSendParse.text
         var sendsExistingDraft = spokenSendParse.shouldSend &&
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 

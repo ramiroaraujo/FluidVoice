@@ -17,7 +17,8 @@ struct DictationPromptRequest {
     init(promptText: String, transcript: String, vocabulary: [String] = [], context: String? = nil) {
         var promptText = promptText
         if !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            for addition in [Self.vocabularyInstruction(vocabulary), context] {
+            let lineBreaks = transcript.contains("\n") ? Self.lineBreakInstruction : nil
+            for addition in [Self.vocabularyInstruction(vocabulary), lineBreaks, context] {
                 if let addition, !addition.isEmpty { promptText += "\n\n" + addition }
             }
         }
@@ -65,6 +66,9 @@ struct DictationPromptRequest {
             "similar-sounding words. When a word or phrase in the transcript sounds like one of these terms " +
             "and fits the context, write the term exactly as spelled here.\nTerms: " + terms.joined(separator: ", ")
     }
+
+    static let lineBreakInstruction = "Line breaks: the speaker put each line break in the transcript on purpose. " +
+        "Keep every one where it is, and keep blank lines."
 
     static let maxScreenContextCharacters = 6000
 
