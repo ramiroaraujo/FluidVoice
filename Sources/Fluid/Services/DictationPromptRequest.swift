@@ -70,6 +70,15 @@ struct DictationPromptRequest {
     static let lineBreakInstruction = "Line breaks: the speaker put each line break in the transcript on purpose. " +
         "Keep every one where it is, and keep blank lines."
 
+    /// Words the speaker typed in the Live Edit editor rather than dictated.
+    static func typedTextInstruction(_ typedText: [String]) -> String? {
+        guard let listed = try? JSONEncoder().encode(typedText), !typedText.isEmpty else { return nil }
+        return "Typed text: the speaker typed these parts of the transcript by hand instead of dictating them: " +
+            String(decoding: listed, as: UTF8.self) + ". Keep each one exactly as typed, character for character, where it " +
+            "appears: spelling, capitalization, punctuation, list bullets and numbering. Keep the lines they sit on as " +
+            "separate lines. Clean up only the dictated words around them."
+    }
+
     static let maxScreenContextCharacters = 6000
 
     /// Text read from the window the dictation goes to, by Accessibility or by OCR of a screenshot

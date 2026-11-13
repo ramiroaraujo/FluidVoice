@@ -2882,7 +2882,8 @@ struct ContentView: View {
         benchmarkID: String? = nil,
         stopSnapshot: DictationStopSnapshot? = nil,
         allowsOfflineFallback: Bool = false,
-        protectedText: [String] = []
+        protectedText: [String] = [],
+        typedText: [String] = []
     ) async throws -> AITextProcessingResult {
         guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
             throw MeetingModelResidencyError.busy
@@ -2996,9 +2997,10 @@ struct ContentView: View {
             return self.buildSystemPrompt(appInfo: appInfo, dictationSlot: dictationSlot)
         }()
         // Images pasted in Live Edit arrive as file paths the target app reads, and links as themselves; they must pass through untouched.
-        let promptText = protectedText.isEmpty ? resolvedPromptText : resolvedPromptText + "\n\n" +
+        var promptText = protectedText.isEmpty ? resolvedPromptText : resolvedPromptText + "\n\n" +
             "The transcript contains these image file paths and links: \(protectedText.joined(separator: ", ")). " +
             "Keep each one exactly as written, character for character, where it appears. Never edit, shorten, or remove them."
+        if let typed = DictationPromptRequest.typedTextInstruction(typedText) { promptText += "\n\n" + typed }
 
         // Keep cleanup instructions separate from transcript data. Explicit
         // ${transcript} templates retain their authored single-turn layout.
@@ -3447,7 +3449,8 @@ struct ContentView: View {
                     benchmarkID: pipelineID,
                     stopSnapshot: stopSnapshot,
                     allowsOfflineFallback: true,
-                    protectedText: liveEdit.protectedText
+                    protectedText: liveEdit.protectedText,
+                    typedText: liveEdit.typedText
                 )
                 refiningStatusTask.cancel()
                 finalText = result.text

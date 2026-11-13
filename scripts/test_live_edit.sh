@@ -11,3 +11,5 @@ xcrun swiftc -O -parse-as-library Sources/Fluid/Services/LiveEditImagePaste.swif
 "$task_test_dir/paste-tests"
 xcrun swiftc -O -parse-as-library Sources/Fluid/Services/LiveEditMarkup.swift Tests/LiveEditMarkupTests.swift -o "$task_test_dir/markup-tests"
 "$task_test_dir/markup-tests"
+xcrun swiftc -O -parse-as-library Sources/Fluid/Services/DictationMuteTimeline.swift Tests/DictationTypingHoldTests.swift -o "$task_test_dir/hold-tests"
+"$task_test_dir/hold-tests"

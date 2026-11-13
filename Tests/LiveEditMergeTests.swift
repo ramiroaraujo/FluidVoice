@@ -26,6 +26,11 @@ enum LiveEditMergeTests {
         precondition(merged("a b c d", "a d", "a b c d e") == "a d e", "A deletion survives an append")
         precondition(merged("one two", "one\ntwo", "one two three") == "one\ntwo three", "A typed line break survives")
         precondition(merged("hello", "hello world", "") == "hello world", "Typed text survives an empty final pass")
+        precondition(merged("one two", "one\ntwo", "One, two three") == "One,\ntwo three",
+                     "A typed line break survives a revision of the word before it")
+        precondition(merged("hello", "hello\n- ", "Hello, world") == "Hello,\n- world",
+                     "A typed bullet on a new line survives a revision of the word before it")
+        precondition(merged("", "# Title\n", "hello there") == "# Title\nhello there", "Text typed before any speech stays first")
         precondition(merged("I am hel", "I am hel [image 1]", "I am hello there") == "I am hello [image 1] there",
                      "An image appended after the newest words keeps their revision, and new speech follows it")
         precondition(merged("I am hello there", "I am hello [image 1] there", "I am hello there.") == "I am hello [image 1] there.",

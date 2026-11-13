@@ -9,6 +9,7 @@ private final class LiveEditNSTextView: NSTextView {
     /// that becomes the image file's path when the dictation stops. A link pastes trimmed, and hides the Paste Link button.
     override func paste(_ sender: Any?) {
         let session = LiveEditSession.shared
+        session.onKeyPressed?()
         guard var insertion = session.clipboardImagePlaceholders() ?? session.clipboardLink() else { return super.paste(sender) }
         let text = self.string as NSString, range = self.selectedRange()
         func isSpace(at index: Int) -> Bool {
@@ -18,6 +19,12 @@ private final class LiveEditNSTextView: NSTextView {
         if !isSpace(at: range.location - 1) { insertion = " " + insertion }
         if !isSpace(at: NSMaxRange(range)) { insertion += " " }
         self.insertText(insertion, replacementRange: range)
+    }
+
+    /// Typing, deleting and moving the caret all count; ⌘↩ stops the dictation and does not.
+    override func keyDown(with event: NSEvent) {
+        LiveEditSession.shared.onKeyPressed?()
+        super.keyDown(with: event)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -71,6 +78,7 @@ struct LiveEditTextView: NSViewRepresentable {
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
+        self.session.editor = textView
         context.coordinator.refreshHighlights()
         DispatchQueue.main.async { context.coordinator.focusIfNeeded() }
         return scrollView
@@ -86,6 +94,9 @@ struct LiveEditTextView: NSViewRepresentable {
         let session: LiveEditSession
         weak var textView: NSTextView?
         private var didFocus = false
+        /// The caret sits after the last word and moves with new speech, until the user puts it elsewhere.
+        private var followsEnd = true
+        private var isSyncing = false
 
         init(session: LiveEditSession) {
             self.session = session
@@ -99,6 +110,7 @@ struct LiveEditTextView: NSViewRepresentable {
             window.makeFirstResponder(textView)
             let length = (textView.string as NSString).length
             textView.setSelectedRange(NSRange(location: min(self.session.openingCaret ?? length, length), length: 0))
+            self.textViewDidChangeSelection(Notification(name: NSTextView.didChangeSelectionNotification))
             // Scroll once the notch has finished growing.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak textView] in
                 guard let textView else { return }
@@ -123,6 +135,8 @@ struct LiveEditTextView: NSViewRepresentable {
                 return new.length - suffix
             }
             let selection = textView.selectedRange()
+            self.isSyncing = true
+            defer { self.isSyncing = false }
             let wasAtBottom = textView.enclosingScrollView.map { $0.contentView.bounds.maxY >= textView.frame.maxY - 4 } ?? true
 
             let replacement = new.substring(with: NSRange(location: prefix, length: new.length - prefix - suffix))
@@ -132,8 +146,12 @@ struct LiveEditTextView: NSViewRepresentable {
             )
             // Recognizer updates bypass undo; a stale undo stack would rewrite the wrong words.
             textView.undoManager?.removeAllActions()
-            let start = mapped(selection.location)
-            textView.setSelectedRange(NSRange(location: start, length: max(0, mapped(NSMaxRange(selection)) - start)))
+            if self.followsEnd {
+                textView.setSelectedRange(NSRange(location: new.length, length: 0))
+            } else {
+                let start = mapped(selection.location)
+                textView.setSelectedRange(NSRange(location: start, length: max(0, mapped(NSMaxRange(selection)) - start)))
+            }
             if wasAtBottom { textView.scrollToEndOfDocument(nil) }
             self.refreshHighlights()
         }
@@ -150,6 +168,18 @@ struct LiveEditTextView: NSViewRepresentable {
                     .underlineColor: NSColor(calibratedRed: 0.51, green: 0.86, blue: 0.78, alpha: 0.75),
                 ], forCharacterRange: range)
             }
+        }
+
+        /// Only the user's own caret moves decide; a recognizer update moves the selection too.
+        func textViewDidChangeSelection(_: Notification) {
+            guard !self.isSyncing, let textView else { return }
+            let text = textView.string as NSString, selection = textView.selectedRange()
+            let followsEnd = selection.length == 0 &&
+                text.substring(from: selection.location).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if followsEnd != self.followsEnd {
+                DebugLogger.shared.debug("Live Edit caret \(followsEnd ? "follows the end" : "left the end") at \(selection.location)/\(text.length)", source: "LiveEdit")
+            }
+            self.followsEnd = followsEnd
         }
 
         func textDidChange(_: Notification) {

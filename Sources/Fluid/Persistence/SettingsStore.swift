@@ -6384,6 +6384,12 @@ extension SettingsStore {
     }
 
     /// Shift+Command+V while recording adds the clipboard to the transcript instead of reaching the app.
+    /// Seconds Live Edit holds audio after a key press in the editor before keeping it; another key press
+    /// inside that time drops it. No settings row: `defaults write <bundle id> LiveEditTypingHoldSeconds -float 1.5`.
+    var liveEditTypingHoldSeconds: TimeInterval {
+        self.defaults.object(forKey: "LiveEditTypingHoldSeconds") as? Double ?? 1.0
+    }
+
     var shiftCommandVPasteEnabled: Bool {
         get { self.defaults.bool(forKey: Keys.shiftCommandVPasteEnabled) }
         set {
