@@ -21,7 +21,8 @@ enum DictationPromptRequestTests {
             let request = DictationPromptRequest(promptText: prompt, transcript: transcript)
             precondition(request.messages.count == 2)
             precondition(request.messages[0]["role"] as? String == "system")
-            precondition(request.messages[0]["content"] as? String == prompt)
+            let lineBreaks = transcript.contains("\n") ? "\n\n" + DictationPromptRequest.lineBreakInstruction : ""
+            precondition(request.messages[0]["content"] as? String == prompt + lineBreaks)
             precondition(request.messages[1]["role"] as? String == "user")
             let decoded = try JSONDecoder().decode([String: String].self, from: Data(request.userContent.utf8))
             precondition(decoded == ["transcript": transcript])
@@ -55,6 +56,9 @@ enum DictationPromptRequestTests {
         precondition(withContext.systemPrompt.hasPrefix(prompt + "\n\nVocabulary: ") && withContext.systemPrompt.hasSuffix("\n\nConversation context: x"))
         precondition(DictationPromptRequest(promptText: prompt, transcript: "hi", context: "").systemPrompt == prompt)
         precondition(DictationPromptRequest(promptText: " ", transcript: "hi", context: "ctx").messages.count == 1)
+        let broken = DictationPromptRequest(promptText: prompt, transcript: "one\ntwo", context: "Conversation context: x")
+        precondition(broken.systemPrompt == prompt + "\n\n" + DictationPromptRequest.lineBreakInstruction + "\n\nConversation context: x")
+        precondition(!DictationPromptRequest(promptText: prompt, transcript: "one two").systemPrompt.contains("Line breaks"))
         precondition(DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: " ", screenLines: []) == nil)
         let lines = (1...2000).map { "line \($0) le cobras menos de lo q le holdeas" }
         let screen = DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: "No, en la gran", screenLines: lines)!

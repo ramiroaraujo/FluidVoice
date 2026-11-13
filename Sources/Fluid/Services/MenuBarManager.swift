@@ -202,13 +202,16 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             }
             .store(in: &self.cancellables)
 
-        // Subscribe to partial transcription updates for streaming preview
-        asrService.$partialTranscription
+        // Subscribe to partial transcription updates for streaming preview, and redraw it when
+        // Shift+Enter adds a line break. Both values are current once the update reaches main.
+        asrService.$partialTranscription.map { _ in () }
+            .merge(with: asrService.$previewLineBreaks.map { _ in () })
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] newText in
-                guard self != nil else { return }
+            .sink { [weak self, weak asrService] in
+                guard self != nil, let asrService else { return }
                 if NotchOverlayManager.shared.shouldShowOrTrackLivePreviewText {
-                    NotchOverlayManager.shared.updateTranscriptionText(LiveEditSession.shared.ingest(newText))
+                    let text = LiveEditSession.shared.ingest(asrService.partialTranscription)
+                    NotchOverlayManager.shared.updateTranscriptionText(asrService.previewLineBreaks?.preview(text) ?? text)
                 }
             }
             .store(in: &self.cancellables)
