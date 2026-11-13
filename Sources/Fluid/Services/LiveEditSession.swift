@@ -30,15 +30,40 @@ final class LiveEditSession: ObservableObject {
     private var lastAppended: String?
     /// Adds the Shift+Enter line breaks and the new-line cursor to the text the overlay shows. Set by MenuBarManager.
     var previewText: (String) -> String = { $0 }
+    /// A key press in the editor; the recording holds or drops the audio around it. Set by MenuBarManager.
+    var onKeyPressed: (() -> Void)?
+
+    /// The open editor's text view. Set by LiveEditTextView.
+    weak var editor: NSTextView?
 
     var hasEdits: Bool { self.text != self.recognizedText }
+
+    /// Shift Shift with the editor open: closes it when it has typing focus, and gives it typing focus back
+    /// when another window took it.
+    func toggleFocusOrClose() {
+        guard self.isOpen, let editor, let window = editor.window else { return }
+        if window.isKeyWindow, window.firstResponder === editor {
+            self.close(restoreFocus: true)
+        } else {
+            self.focusEditor()
+        }
+    }
+
+    /// Gives the open editor typing focus; the screenshot selector takes it while it shows.
+    func focusEditor() {
+        guard self.isOpen, let editor, let window = editor.window else { return }
+        window.makeKey()
+        window.makeFirstResponder(editor)
+    }
 
     private init() {}
 
     /// Takes the recognizer's full transcript and returns the text the overlay should show.
-    func ingest(_ recognized: String) -> String {
+    func ingest(_ recognized: String, isRecording: Bool) -> String {
         // The recognizer clears its transcript only when a recording starts or is cancelled.
         guard !recognized.isEmpty else {
+            // The editor can open before the first words; what is typed there stays.
+            if self.isOpen, isRecording, self.recognizedText.isEmpty { return self.text }
             self.reset()
             return ""
         }
@@ -125,8 +150,9 @@ final class LiveEditSession: ObservableObject {
     /// Animated as a transaction so DynamicNotchKit's notch shape, outside the content view, grows and shrinks with it.
     private static let resizeAnimation = Animation.snappy(duration: 0.22)
 
-    func open(caret: Int? = nil) {
-        guard !self.isOpen, !self.text.isEmpty else { return }
+    /// `allowingEmpty` opens the editor before any words exist, to type first and talk after.
+    func open(caret: Int? = nil, allowingEmpty: Bool = false) {
+        guard !self.isOpen, allowingEmpty || !self.text.isEmpty else { return }
         self.openingCaret = caret
         withAnimation(Self.resizeAnimation) { self.isOpen = true }
     }
@@ -157,12 +183,16 @@ final class LiveEditSession: ObservableObject {
     }
 
     /// Merges the final transcript under the hand edits, swaps image placeholders for their file paths,
-    /// and ends the session. Returns the image paths and links the text contains, which the AI cleanup must keep as written.
-    func finish(finalTranscript: String) -> (text: String, protectedText: [String]) {
+    /// and ends the session. Returns the image paths and links the text contains, and the runs of words the user
+    /// typed; the AI cleanup must keep both as written.
+    func finish(finalTranscript: String) -> (text: String, protectedText: [String], typedText: [String]) {
         defer { self.reset() }
-        guard self.hasEdits else { return (finalTranscript, []) }
+        guard self.hasEdits else { return (finalTranscript, [], []) }
         DebugLogger.shared.info("Live Edit merged hand edits into the final transcript", source: "LiveEdit")
         var text = LiveEditMerge.merge(base: self.recognizedText, edited: self.text, recognized: finalTranscript)
+        let typedText = LiveEditMerge.editedRanges(recognized: finalTranscript, edited: text)
+            .map { (text as NSString).substring(with: $0) }
+            .filter { !$0.hasPrefix("[image ") && !self.links.contains($0) }
         var usedPaths: [String] = []
         for (index, path) in self.imagePaths.enumerated() {
             let placeholder = "[image \(index + 1)]"
@@ -170,7 +200,7 @@ final class LiveEditSession: ObservableObject {
             text = text.replacingOccurrences(of: placeholder, with: path)
             usedPaths.append(path)
         }
-        return (text, usedPaths + self.links.filter { text.contains($0) })
+        return (text, usedPaths + self.links.filter { text.contains($0) }, typedText)
     }
 
     private func reset() {

@@ -34,7 +34,7 @@ nonisolated enum LiveEditMerge {
             if recognizedChunk.elementsEqual(baseChunk) || editedChunk.elementsEqual(recognizedChunk) {
                 output += editedText
             } else if editedChunk.elementsEqual(baseChunk) {
-                output += recognizedText
+                output += self.keepingTypedWhitespace(recognizedText, base: baseTokens[baseStart..<index], edited: editedText)
             } else if baseChunk.isEmpty {
                 // Both added text at the same spot: the hand edit goes first.
                 output += editedText
@@ -45,7 +45,11 @@ nonisolated enum LiveEditMerge {
                 // they still take the recognizer's revision, and newer speech goes after the additions.
                 let revised = recognizedStart + baseChunk.count
                 output += editedTokens[editedStart..<kept]
-                output += recognizedTokens[recognizedStart..<revised]
+                output += self.keepingTypedWhitespace(
+                    recognizedTokens[recognizedStart..<revised],
+                    base: baseTokens[baseStart..<index],
+                    edited: editedTokens[kept..<(kept + baseChunk.count)]
+                )
                 output += editedTokens[(kept + baseChunk.count)..<editedEnd]
                 output += recognizedTokens[revised..<recognizedEnd]
             } else if atEnd, recognizedChunk.count > baseChunk.count {
@@ -86,6 +90,22 @@ nonisolated enum LiveEditMerge {
             location += token.utf16.count
         }
         return ranges
+    }
+
+    /// The recognizer's revision of words the user left alone, with any whitespace the user changed after
+    /// one of them, such as a typed line break. `base` and `edited` hold the same words.
+    private static func keepingTypedWhitespace(
+        _ recognized: ArraySlice<Substring>,
+        base: ArraySlice<Substring>,
+        edited: ArraySlice<Substring>
+    ) -> [Substring] {
+        var result = Array(recognized)
+        for (offset, (baseToken, editedToken)) in zip(base, edited).enumerated() where baseToken != editedToken && offset < result.count {
+            // A hand edit at the very end may have no whitespace yet; the recognizer's own then stands.
+            let typed = editedToken.dropFirst(self.key(editedToken).count)
+            if !typed.isEmpty { result[offset] = Substring(self.key(result[offset]) + typed) }
+        }
+        return result
     }
 
     /// A word plus the whitespace after it. Only the first token can be bare whitespace.

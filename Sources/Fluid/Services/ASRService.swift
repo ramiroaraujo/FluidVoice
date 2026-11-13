@@ -594,6 +594,12 @@ final class ASRService: ObservableObject {
     @Published private(set) var isDictationMuted = false
     private(set) var dictationMuteGeneration: UInt64 = 0
 
+    /// A key press in the Live Edit editor; see `AudioCapturePipeline.liveEditKeyPressed`.
+    func liveEditKeyPressed() {
+        guard self.isRunning else { return }
+        self.audioCapturePipeline.liveEditKeyPressed(window: SettingsStore.shared.liveEditTypingHoldSeconds)
+    }
+
     func setDictationMuted(_ muted: Bool) {
         guard self.isRunningOrStarting, !self.isDictionaryTrainingCaptureActive,
               !self.isStoppingFinalTranscription, muted != self.isDictationMuted else { return }
@@ -7933,6 +7939,7 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
     private var recordingEnabled: Bool = false
     private var muteTimeline = DictationMuteTimeline()
     private var needsMuteSeparation = false
+    private var typingHold = DictationTypingHold()
     private var levelMonitoringEnabled: Bool = false
     private var firstAudioReported: Bool = false
     private var recordingSessionID: Int = 0
@@ -8011,11 +8018,21 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
         self.lock.withLock { self.muteTimeline.setMuted(muted, at: hostTime) }
     }
 
+    /// A key press in the Live Edit editor: audio since the previous key press is dropped when that one
+    /// was less than `window` seconds ago, and audio from now on is held for `window` seconds.
+    func liveEditKeyPressed(window: TimeInterval) {
+        self.lock.withLock {
+            guard self.recordingEnabled, self.recordingStopHostTime == nil else { return }
+            self.typingHold.keyPressed(at: mach_absolute_time(), windowTicks: UInt64(max(window, 0) * Self.hostTicksPerSecond))
+        }
+    }
+
     /// Reset only between logical recordings, not during an audio-route retry.
     func resetDictationMute() {
         self.lock.withLock {
             self.muteTimeline = DictationMuteTimeline()
             self.needsMuteSeparation = false
+            self.typingHold = DictationTypingHold()
         }
     }
 
@@ -8048,6 +8065,8 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
         self.lock.lock()
         if self.recordingEnabled {
             self.recordingStopHostTime = hostTime
+            // Words spoken after the last typed key are kept even when the stop comes inside the hold.
+            self.audioBuffer.append(self.typingHold.release())
         }
         self.lock.unlock()
     }
@@ -8144,12 +8163,15 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
             self.lock.unlock()
             return
         }
-        let mono16k = self.resampleAudibleRangesLocked(
-            samples,
-            acceptedRange: acceptedRange,
-            sampleRate: sampleRate,
-            inputHostTime: inputHostTime,
-            inputSampleTime: inputSampleTime
+        let mono16k = self.typingHold.route(
+            self.resampleAudibleRangesLocked(
+                samples,
+                acceptedRange: acceptedRange,
+                sampleRate: sampleRate,
+                inputHostTime: inputHostTime,
+                inputSampleTime: inputSampleTime
+            ),
+            at: inputHostTime > 0 ? inputHostTime : mach_absolute_time()
         )
         guard !mono16k.isEmpty || self.muteTimeline.hasExclusions else {
             self.lock.unlock()

@@ -193,6 +193,7 @@ final class LiveEditScreenshot {
         self.shot = nil
         self.views.forEach { $0.window?.orderOut(nil) }
         self.views = []
+        LiveEditSession.shared.focusEditor()
         NSCursor.arrow.set()
         Self.setsCursorInBackground(false)
     }

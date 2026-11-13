@@ -316,6 +316,8 @@ final class GlobalHotkeyManager: NSObject {
     private var holdToMuteKeyState = HoldToMuteKeyState()
     let holdToMuteSpaceTap = HoldToMuteSpaceTap()
     private var muteRecordingGeneration: UInt64?
+    /// When Shift last went down alone with no key since; a second press soon after opens Live Edit.
+    private var lastShiftTapAt: TimeInterval?
     private var muteReleaseRecoveryTask: Task<Void, Never>?
     // Event-replay tests opt out of consulting the real keyboard.
     var holdToMuteChecksPhysicalKeyState = true
@@ -1281,6 +1283,7 @@ final class GlobalHotkeyManager: NSObject {
 
         switch type {
         case .keyDown:
+            self.lastShiftTapAt = nil
             // A fresh down proves the previous same-key release was missed. Do not let its
             // stale ownership turn ordinary typing into a shortcut on the next key-up.
             if self.hotkeyMode == .toggle,
@@ -1595,6 +1598,7 @@ final class GlobalHotkeyManager: NSObject {
                 )
             }
             self.handleHoldToCapture(modifiers: eventModifiers)
+            self.handleLiveEditDoubleShift(keyCode: keyCode, modifiers: eventModifiers)
 
             for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
                 if self.handleModifierOnlyShortcutFlagsChanged(
@@ -2823,12 +2827,39 @@ extension GlobalHotkeyManager {
             LiveEditScreenshot.shared.modifierReleased()
             return
         }
-        // Option and the other modifiers type while the Live Edit editor is open.
-        guard self.asrService.isRunningOrStarting, !LiveEditSession.shared.isOpen,
+        guard self.asrService.isRunningOrStarting,
               self.isDictateRecordingProvider?() ?? false,
               !(self.isShortcutCaptureActiveProvider?() ?? false)
         else { return }
         LiveEditScreenshot.shared.begin()
+    }
+
+    /// Shift pressed twice within 0.4 s, with no other key between, while dictating opens the Live Edit
+    /// editor with the caret at the end. With the editor open it closes it, or takes typing focus back
+    /// when another window has it. The events still reach the target app.
+    private func handleLiveEditDoubleShift(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        let held = modifiers.intersection(HotkeyShortcut.relevantModifierMask)
+        guard keyCode == 56 || keyCode == 60, held.isSubset(of: .shift) else {
+            self.lastShiftTapAt = nil
+            return
+        }
+        // A release leaves the first press standing.
+        guard held == .shift else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let last = self.lastShiftTapAt, now - last <= 0.4 else {
+            self.lastShiftTapAt = now
+            return
+        }
+        self.lastShiftTapAt = nil
+        let notch = NotchOverlayManager.shared, content = NotchContentState.shared
+        guard self.asrService.isRunning, self.isDictateRecordingProvider?() ?? false,
+              !(self.isShortcutCaptureActiveProvider?() ?? false)
+        else { return }
+        if LiveEditSession.shared.isOpen { return LiveEditSession.shared.toggleFocusOrClose() }
+        guard SettingsStore.shared.overlayPosition != .bottom, notch.isOverlayVisible, notch.shouldShowOrTrackLivePreviewText,
+              content.mode == .dictation, !content.isProcessing
+        else { return }
+        LiveEditSession.shared.open(allowingEmpty: true)
     }
 
     private func handleHoldToMute(type: CGEventType, event: CGEvent, proxy: CGEventTapProxy?) -> Bool {

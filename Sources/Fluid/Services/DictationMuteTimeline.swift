@@ -52,3 +52,39 @@ nonisolated struct DictationMuteTimeline {
         return result
     }
 }
+
+/// Live Edit typing hold, accessed under AudioCapturePipeline's capture lock. Audio recorded after a key
+/// press waits for `window`: another key press inside it drops that audio, and without one it is kept
+/// whole, so speech that starts right after the last key loses nothing.
+nonisolated struct DictationTypingHold {
+    private var deadline: UInt64?
+    private var held: [Float] = []
+    private var dropped = false
+
+    mutating func keyPressed(at hostTime: UInt64, windowTicks: UInt64) {
+        if !self.held.isEmpty { self.dropped = true }
+        self.held.removeAll(keepingCapacity: true)
+        self.deadline = hostTime &+ windowTicks
+    }
+
+    /// Returns the 16 kHz samples to commit now, for a packet that starts at `hostTime`.
+    mutating func route(_ samples: [Float], at hostTime: UInt64) -> [Float] {
+        guard let deadline else { return samples }
+        guard hostTime >= deadline else {
+            self.held += samples
+            return []
+        }
+        return self.release() + samples
+    }
+
+    /// Ends the hold and returns the audio it was holding; a stop keeps the newest words.
+    mutating func release() -> [Float] {
+        defer {
+            self.deadline = nil
+            self.held = []
+            self.dropped = false
+        }
+        // A short gap where audio was dropped, so the words on each side stay apart.
+        return self.dropped && !self.held.isEmpty ? [Float](repeating: 0, count: 1600) + self.held : self.held
+    }
+}

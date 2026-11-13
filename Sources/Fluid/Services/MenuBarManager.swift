@@ -204,6 +204,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
 
         // Subscribe to partial transcription updates for streaming preview, and redraw it when
         // Shift+Enter adds a line break. Both values are current once the update reaches main.
+        LiveEditSession.shared.onKeyPressed = { [weak asrService] in asrService?.liveEditKeyPressed() }
         LiveEditSession.shared.previewText = { [weak asrService] text in
             let shown = asrService?.previewLineBreaks?.preview(text) ?? text
             return shown.hasSuffix("\n") ? shown + "▍" : shown
@@ -214,7 +215,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             .sink { [weak self, weak asrService] in
                 guard self != nil, let asrService else { return }
                 if NotchOverlayManager.shared.shouldShowOrTrackLivePreviewText {
-                    let text = LiveEditSession.shared.ingest(asrService.partialTranscription)
+                    let text = LiveEditSession.shared.ingest(asrService.partialTranscription, isRecording: asrService.isRunning)
                     NotchOverlayManager.shared.updateTranscriptionText(LiveEditSession.shared.previewText(text))
                 }
             }
