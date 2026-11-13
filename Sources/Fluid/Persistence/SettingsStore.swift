@@ -6132,6 +6132,7 @@ private extension SettingsStore {
         static let textInsertionMode = "TextInsertionMode"
         static let spokenSendEnabled = "SpokenSendEnabled"
         static let shiftEnterLineBreaksEnabled = "ShiftEnterLineBreaksEnabled"
+        static let shiftCommandVPasteEnabled = "ShiftCommandVPasteEnabled"
         static let spokenSendImmediatelyEnabled = "SpokenSendImmediatelyEnabled"
         static let spokenSendPhrase = "SpokenSendPhrase"
         static let spokenSendKey = "SpokenSendKey"
@@ -6379,6 +6380,15 @@ extension SettingsStore {
         set {
             objectWillChange.send()
             self.defaults.set(newValue, forKey: Keys.shiftEnterLineBreaksEnabled)
+        }
+    }
+
+    /// Shift+Command+V while recording adds the clipboard to the transcript instead of reaching the app.
+    var shiftCommandVPasteEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.shiftCommandVPasteEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.shiftCommandVPasteEnabled)
         }
     }
 

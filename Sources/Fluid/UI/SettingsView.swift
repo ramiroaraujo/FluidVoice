@@ -792,6 +792,16 @@ struct SettingsView: View {
                                         Divider().opacity(0.2)
 
                                         self.optionToggleRow(
+                                            title: "Shift+Command+V Paste",
+                                            description: "Press Shift+Command+V while dictating to add the copied text, link or image after the newest words. The app you dictate into doesn't receive the key.",
+                                            isOn: Binding(
+                                                get: { self.settings.shiftCommandVPasteEnabled },
+                                                set: { self.settings.shiftCommandVPasteEnabled = $0 }
+                                            )
+                                        )
+                                        Divider().opacity(0.2)
+
+                                        self.optionToggleRow(
                                             title: "Save Transcription History",
                                             description: "Save transcriptions for stats tracking. Disable for privacy.",
                                             isOn: Binding(
