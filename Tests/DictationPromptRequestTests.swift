@@ -65,7 +65,8 @@ enum DictationPromptRequestTests {
         precondition(screen.hasPrefix("Screen context: text read from the Slack window"))
         precondition(screen.contains("line 2000 le cobras") && !screen.contains("line 1 le cobras"), "keeps the bottom lines")
         precondition(screen.count < DictationPromptRequest.maxScreenContextCharacters + 1000)
-        precondition(screen.contains("<already_typed>\nNo, en la gran\n</already_typed>"))
+        precondition(screen.hasSuffix(DictationPromptRequest.alreadyTypedBlock("No, en la gran")))
+        precondition(DictationPromptRequest.alreadyTypedBlock("x").contains("start with a lowercase letter"))
         let slack = DictationPromptRequest.screenContextInstruction(appName: "Slack", textBeforeCursor: nil, screenLines: [
             "Federico Caramelli: la plata la tenes. 12:00 PM.", "Today at 12:00:43 PM", "la plata la tenes", "la plata la tenes otra vez",
         ])!

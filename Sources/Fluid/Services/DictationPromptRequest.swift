@@ -102,12 +102,22 @@ struct DictationPromptRequest {
             "Screen context: text read from the \(appName) window the speaker is dictating into, by accessibility " +
                 "or by OCR of a screenshot. It includes interface labels, menus, names and unrelated text, and OCR may " +
                 "garble words. Use it only to spell names and terms the way they appear there and to understand the " +
-                "topic, such as what the speaker is replying to. It is not part of the transcript: never copy, answer, " +
-                "summarize or continue it in your output.",
+                "topic, such as what the speaker is replying to. It is not part of the transcript: never copy, answer " +
+                "or summarize it in your output.",
         ]
         if !screen.isEmpty { parts.append("<screen_text>\n\(screen.reversed().joined(separator: "\n"))\n</screen_text>") }
-        if !typed.isEmpty { parts.append("<already_typed>\n\(typed)\n</already_typed>\nThe transcript will follow the text already typed.") }
+        if !typed.isEmpty { parts.append(self.alreadyTypedBlock(typed)) }
         return parts.joined(separator: "\n")
+    }
+
+    /// Text already in the field, before the cursor, and how the transcript continues it.
+    static func alreadyTypedBlock(_ typed: String) -> String {
+        "<already_typed>\n\(typed)\n</already_typed>\n" +
+            "The transcript is inserted at the cursor, right after the text already typed, and continues it. When that " +
+            "text ends mid-sentence, without closing punctuation (. ! ?) or a line break, write the transcript as the " +
+            "rest of that sentence: start with a lowercase letter unless the first word is a name, an acronym or \"I\", " +
+            "and don't repeat words already typed. When it ends a sentence, start a new one with a capital letter. " +
+            "Output only the transcript, never the text already typed."
     }
 
     static func renderTemplate(promptText: String, transcript: String) -> String {
