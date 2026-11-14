@@ -188,9 +188,25 @@ struct LiveEditTextView: NSViewRepresentable {
             self.refreshHighlights()
         }
 
-        func textView(_: NSTextView, doCommandBy selector: Selector) -> Bool {
+        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertNewline(_:)) { return self.continueList(in: textView) }
             guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
             self.session.close(restoreFocus: true)
+            return true
+        }
+
+        /// Return on a `*`, `-` or numbered item starts the next item; on an empty item it removes the marker.
+        private func continueList(in textView: NSTextView) -> Bool {
+            let text = textView.string as NSString, caret = textView.selectedRange()
+            guard caret.length == 0 else { return false }
+            let line = text.lineRange(for: caret)
+            let lead = NSRange(location: line.location, length: caret.location - line.location)
+            let after = text.substring(with: NSRange(location: caret.location, length: NSMaxRange(line) - caret.location))
+            switch LiveEditList.onReturn(beforeCaret: text.substring(with: lead), afterCaret: after) {
+            case nil: return false
+            case let .insert(item): textView.insertText(item, replacementRange: caret)
+            case .endList: textView.insertText("", replacementRange: lead)
+            }
             return true
         }
     }
