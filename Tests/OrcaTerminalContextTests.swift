@@ -102,7 +102,8 @@ enum OrcaTerminalContextTests {
         precondition(OrcaTerminalContext.promptBlock(conversation: nil, typed: nil) == nil)
         let block = OrcaTerminalContext.promptBlock(conversation: "User: hi", typed: "so the")!
         precondition(block.contains("<recent_conversation>\nUser: hi\n</recent_conversation>"))
-        precondition(block.hasSuffix("<already_typed>\nso the\n</already_typed>"))
+        precondition(block.hasSuffix(DictationPromptRequest.alreadyTypedBlock("so the")))
+        precondition(block.contains("<already_typed>\nso the\n</already_typed>\nThe transcript is inserted at the cursor"))
         precondition(!OrcaTerminalContext.promptBlock(conversation: nil, typed: "x")!.contains("recent_conversation"))
     }
 }

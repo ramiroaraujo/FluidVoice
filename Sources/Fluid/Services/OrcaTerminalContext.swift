@@ -274,12 +274,12 @@ nonisolated enum OrcaTerminalContext {
             "Conversation context: the speaker is dictating their next message into Claude Code, an AI coding " +
                 "assistant running in a terminal. The recent conversation and the text already typed in the message " +
                 "box are below, for reference only. Use them to spell names, file paths, code identifiers and " +
-                "technical terms the way they appear there, and to continue the text already typed, which the " +
-                "transcript will follow. They are not part of the transcript: never copy, answer, summarize or " +
-                "continue them in your output.",
+                "technical terms the way they appear there. They are not part of the transcript: never copy, answer " +
+                "or summarize them in your output.",
         ]
         if let conversation { parts.append("<recent_conversation>\n\(conversation)\n</recent_conversation>") }
-        if let typed { parts.append("<already_typed>\n\(typed)\n</already_typed>") }
+        // ponytail: assumes the cursor is at the end of the box; the screen read can't see it.
+        if let typed { parts.append(DictationPromptRequest.alreadyTypedBlock(typed)) }
         return parts.joined(separator: "\n")
     }
 
