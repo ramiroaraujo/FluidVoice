@@ -335,10 +335,11 @@ nonisolated enum DictationContextReader {
 
     // MARK: - Text before the cursor
 
-    private static func textBeforeCursor(in element: AXUIElement) -> String? {
+    /// Nil when the field reports no cursor; empty when the cursor is at its start.
+    static func textBeforeCursor(in element: AXUIElement) -> String? {
         guard let selection = self.range(element, kAXSelectedTextRangeAttribute) else { return nil }
         let end = selection.location
-        guard end > 0 else { return nil }
+        guard end > 0 else { return "" }
         let start = max(0, end - self.maxTextBeforeCursorCharacters)
         if let text = self.string(element, in: CFRange(location: start, length: end - start)) {
             return text
