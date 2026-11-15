@@ -2618,8 +2618,15 @@ struct ContentView: View {
             return
         }
         let startedAt = ProcessInfo.processInfo.systemUptime
-        let context = await capture.result(timeout: .milliseconds(300))
+        var context = await capture.result(timeout: .milliseconds(300))
         guard self.settings.dictationScreenContextEnabled else { return }
+        // The cursor's text now, not at recording start: the speaker may have typed while speaking.
+        // ponytail: refreshes only a context that was read; a field empty and wordless at start stays unread.
+        if context != nil, let element = target.element,
+           let typed = DictationContextReader.textBeforeCursor(in: element)
+        {
+            context?.textBeforeCursor = typed.isEmpty ? nil : typed
+        }
         stopSnapshot?.typingContext = context
         self.appBench(
             "dictation_context waitMs=\(Int(((ProcessInfo.processInfo.systemUptime - startedAt) * 1000).rounded())) "
