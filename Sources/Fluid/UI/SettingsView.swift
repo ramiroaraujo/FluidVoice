@@ -1203,6 +1203,9 @@ struct SettingsView: View {
                 }
                 .shownInSettingsSection(.audio, selectedSection: self.selectedSection)
 
+                VoiceFilterSettingsCard()
+                    .shownInSettingsSection(.audio, selectedSection: self.selectedSection)
+
                 // Overlay Settings Card
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {

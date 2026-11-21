@@ -81,6 +81,7 @@
 		E5EC00000000000000000002 /* MeetingEchoVetoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000001 /* MeetingEchoVetoTests.swift */; };
 		E5EC00000000000000000012 /* MeetingFallbackEchoProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000011 /* MeetingFallbackEchoProbeTests.swift */; };
 		E5EC00000000000000000022 /* MeetingNearFieldGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000021 /* MeetingNearFieldGateTests.swift */; };
+		D1C7F00000000000000000A2 /* DictationNearFieldGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C7F00000000000000000A1 /* DictationNearFieldGateTests.swift */; };
 		E5EC00000000000000000032 /* MeetingLiveSilenceEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000031 /* MeetingLiveSilenceEndpointTests.swift */; };
 		E5EC00000000000000000042 /* VoiceProcessingDuckingProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000041 /* VoiceProcessingDuckingProbeTests.swift */; };
 		E5EC00000000000000000052 /* VoiceProcessingSpeechDuckingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5EC00000000000000000051 /* VoiceProcessingSpeechDuckingTests.swift */; };
@@ -265,6 +266,7 @@
 		E5EC00000000000000000001 /* MeetingEchoVetoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingEchoVetoTests.swift; sourceTree = "<group>"; };
 		E5EC00000000000000000011 /* MeetingFallbackEchoProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingFallbackEchoProbeTests.swift; sourceTree = "<group>"; };
 		E5EC00000000000000000021 /* MeetingNearFieldGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingNearFieldGateTests.swift; sourceTree = "<group>"; };
+		D1C7F00000000000000000A1 /* DictationNearFieldGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationNearFieldGateTests.swift; sourceTree = "<group>"; };
 		E5EC00000000000000000031 /* MeetingLiveSilenceEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingLiveSilenceEndpointTests.swift; sourceTree = "<group>"; };
 		E5EC00000000000000000041 /* VoiceProcessingDuckingProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProcessingDuckingProbeTests.swift; sourceTree = "<group>"; };
 		E5EC00000000000000000051 /* VoiceProcessingSpeechDuckingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProcessingSpeechDuckingTests.swift; sourceTree = "<group>"; };
@@ -538,6 +540,7 @@
 				E5EC00000000000000000001 /* MeetingEchoVetoTests.swift */,
 				E5EC00000000000000000011 /* MeetingFallbackEchoProbeTests.swift */,
 				E5EC00000000000000000021 /* MeetingNearFieldGateTests.swift */,
+				D1C7F00000000000000000A1 /* DictationNearFieldGateTests.swift */,
 				E5EC00000000000000000031 /* MeetingLiveSilenceEndpointTests.swift */,
 				E5EC00000000000000000041 /* VoiceProcessingDuckingProbeTests.swift */,
 				E5EC00000000000000000051 /* VoiceProcessingSpeechDuckingTests.swift */,
@@ -951,6 +954,7 @@
 				E5EC00000000000000000002 /* MeetingEchoVetoTests.swift in Sources */,
 				E5EC00000000000000000012 /* MeetingFallbackEchoProbeTests.swift in Sources */,
 				E5EC00000000000000000022 /* MeetingNearFieldGateTests.swift in Sources */,
+				D1C7F00000000000000000A2 /* DictationNearFieldGateTests.swift in Sources */,
 				E5EC00000000000000000032 /* MeetingLiveSilenceEndpointTests.swift in Sources */,
 				E5EC00000000000000000042 /* VoiceProcessingDuckingProbeTests.swift in Sources */,
 				E5EC00000000000000000052 /* VoiceProcessingSpeechDuckingTests.swift in Sources */,
