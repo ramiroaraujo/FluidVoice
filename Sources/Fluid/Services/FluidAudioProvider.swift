@@ -1096,6 +1096,12 @@ final class FluidAudioProvider: TranscriptionProvider {
         }
     }
 
+    /// Makes the next `transcribeFinal` read its samples from the start instead of finishing the
+    /// live preview's session, for when the final audio differs from what the preview was fed.
+    func discardIncrementalSession() {
+        self.resetIncrementalSession()
+    }
+
     private func resetIncrementalSession() {
         self.incrementalSession = nil
         self.incrementalAcceptedSampleCount = 0

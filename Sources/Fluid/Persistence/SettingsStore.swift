@@ -2006,6 +2006,24 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    /// Silences audio far quieter than the user's voice before the final transcription.
+    var filterBackgroundAudioEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.filterBackgroundAudioEnabled) as? Bool ?? false }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.filterBackgroundAudioEnabled)
+        }
+    }
+
+    /// Silences speech that doesn't match the voice profile. Has no effect without one.
+    var onlyMyVoiceEnabled: Bool {
+        get { self.defaults.object(forKey: Keys.onlyMyVoiceEnabled) as? Bool ?? false }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.onlyMyVoiceEnabled)
+        }
+    }
+
     var enableAIStreaming: Bool {
         get {
             let value = self.defaults.object(forKey: Keys.enableAIStreaming)
@@ -6127,6 +6145,8 @@ private extension SettingsStore {
         static let returnDictationToStartingField = "ReturnDictationToStartingField"
         static let showHistoryPerformanceMetrics = "ShowHistoryPerformanceMetrics"
         static let skipSilentRecordingsEnabled = "SkipSilentRecordingsEnabled"
+        static let filterBackgroundAudioEnabled = "FilterBackgroundAudioEnabled"
+        static let onlyMyVoiceEnabled = "OnlyMyVoiceEnabled"
         static let enableAIStreaming = "EnableAIStreaming"
         static let copyTranscriptionToClipboard = "CopyTranscriptionToClipboard"
         static let textInsertionMode = "TextInsertionMode"

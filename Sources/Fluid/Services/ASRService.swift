@@ -2813,6 +2813,10 @@ final class ASRService: ObservableObject {
     ) async -> AudioCaptureStartOutcome {
         guard !forDictionaryTraining || !requiresPronunciation || DictionaryMatcherExperiment.sharedFeaturesEnabled else { return .failed }
         DebugLogger.shared.info("🎤 START() called - beginning recording session", source: "ASRService")
+        if SettingsStore.shared.onlyMyVoiceEnabled {
+            // Loads the voice model while the user speaks instead of after they stop; a no-op once loaded.
+            Task.detached(priority: .utility) { try? await DictationVoiceMatcher.shared.prepare() }
+        }
 
         guard self.micStatus == .authorized else {
             DebugLogger.shared.error("❌ START() blocked - mic not authorized", source: "ASRService")
@@ -3699,6 +3703,20 @@ final class ASRService: ObservableObject {
             self.benchmarkLog("silence_gate eligible=false skip=false reason=streaming_preview")
         }
 
+        // Only the transcription input is filtered; history and dictionary learning keep the raw capture.
+        let filterBackgroundAudio = SettingsStore.shared.filterBackgroundAudioEnabled
+        let voiceProfile = SettingsStore.shared.onlyMyVoiceEnabled ? DictationVoiceProfile.load() : nil
+        if !isolatedDictionaryCapture, filterBackgroundAudio || voiceProfile != nil {
+            let filterStartedAt = Date().timeIntervalSince1970
+            pcm = await DictationVoiceFilter.apply(pcm, gate: filterBackgroundAudio, voiceProfile: voiceProfile)
+            self.benchmarkLog("voice_filter elapsedMs=\(self.elapsedMilliseconds(since: filterStartedAt))")
+            #if arch(arm64)
+            // The live preview filtered each piece with partial context and its session can't take audio
+            // back, so the final reads the fully filtered recording from the start.
+            (self.transcriptionProvider as? FluidAudioProvider)?.discardIncrementalSession()
+            #endif
+        }
+
         // Pad sub-1s buffers with trailing silence so short utterances (e.g.
         // "yes", "stop") still transcribe. whisper.cpp asserts on buffers
         // shorter than 1s; every other provider handles silence padding
@@ -4416,20 +4434,23 @@ final class ASRService: ObservableObject {
         self.previewLineBreaks = DictationLineBreaks(words: self.previewWords, breakSeconds: self.lineBreakSampleCounts.map { Double($0) / 16_000 })
     }
 
-    func stopWithoutTranscription() async {
+    /// Returns the recorded audio (16 kHz mono), or nothing when the recording couldn't be drained.
+    @discardableResult
+    func stopWithoutTranscription() async -> [Float] {
         await self.stopWithoutTranscription(finishingRecovery: false)
     }
 
-    private func stopWithoutTranscription(finishingRecovery: Bool) async {
+    @discardableResult
+    private func stopWithoutTranscription(finishingRecovery: Bool) async -> [Float] {
         if self.isStarting, self.isRunning == false {
             await self.cancelPendingAudioCaptureStart(reason: "stop_without_transcription")
         }
         guard self.isRunning else {
             self.releaseDictationActivityIfNeeded()
-            return
+            return []
         }
         let stoppingSessionID = self.benchmarkSessionID
-        guard let bufferHandoffToken = self.recordingBufferHandoffGate.begin() else { return }
+        guard let bufferHandoffToken = self.recordingBufferHandoffGate.begin() else { return [] }
         self.mediaPlaybackService.recordingStopped(sessionID: stoppingSessionID)
         defer { self.mediaPlaybackService.sessionFinished(sessionID: stoppingSessionID) }
         var completedBufferHandoff = false
@@ -4451,7 +4472,7 @@ final class ASRService: ObservableObject {
         guard self.isRunning, self.benchmarkSessionID == stoppingSessionID else {
             self.recordingBufferHandoffGate.complete(bufferHandoffToken)
             completedBufferHandoff = true
-            return
+            return []
         }
 
         DebugLogger.shared.info("🛑 Stopping recording - releasing audio devices", source: "ASRService")
@@ -4476,10 +4497,11 @@ final class ASRService: ObservableObject {
         guard await self.drainActiveStreamingWork(sessionID: stoppingSessionID) else {
             self.beginStreamingDrainRecovery(sessionID: stoppingSessionID, token: bufferHandoffToken)
             completedBufferHandoff = true
-            return
+            return []
         }
 
         // NOW it's safe to clear the buffer
+        let samples = self.audioBuffer.getAll()
         self.audioBuffer.clear()
         self.streamingWorkState.endSession(stoppingSessionID)
         self.recordingBufferHandoffGate.complete(bufferHandoffToken)
@@ -4491,6 +4513,7 @@ final class ASRService: ObservableObject {
         self.isProcessingChunk = false
         self.skipNextChunk = false
         self.refreshWordBoostStatus()
+        return samples
     }
 
     private func configureSession() throws {
@@ -7151,24 +7174,39 @@ final class ASRService: ObservableObject {
         #else
         let incrementalDeltaStart: Int? = nil
         #endif
-        let chunk: [Float]
-        if let incrementalDeltaStart {
-            chunk = self.audioBuffer.getRange(
+        let filterBackgroundAudio = SettingsStore.shared.filterBackgroundAudioEnabled
+        let voiceProfile = SettingsStore.shared.onlyMyVoiceEnabled ? DictationVoiceProfile.load() : nil
+        let filtersPreview = filterBackgroundAudio || voiceProfile != nil
+        let rawChunk: [Float]
+        if let incrementalDeltaStart, !filtersPreview {
+            rawChunk = self.audioBuffer.getRange(
                 startingAt: incrementalDeltaStart,
                 count: currentSampleCount - incrementalDeltaStart
             )
         } else {
-            chunk = self.audioBuffer.getPrefix(currentSampleCount)
+            // The voice filter takes its loudness reference from the whole recording so far.
+            rawChunk = self.audioBuffer.getPrefix(currentSampleCount)
         }
 
         // Validate chunk is not empty (defensive check)
-        guard !chunk.isEmpty else {
+        guard !rawChunk.isEmpty else {
             DebugLogger.shared.warning("Audio buffer returned empty chunk despite count > 0. Skipping transcription.", source: "ASRService")
             self.benchmarkLog("chunk_skip index=\(chunkIndex) reason=empty ageMs=\(chunkAgeMs)")
             return
         }
 
         self.isProcessingChunk = true
+        // ponytail: without an incremental session (pronunciation matching off) every tick re-filters the
+        // whole prefix, so voice matching cost grows with long dictations; filter only new audio if that bites.
+        let chunk = filtersPreview
+            ? await DictationVoiceFilter.apply(
+                rawChunk,
+                from: incrementalDeltaStart ?? 0,
+                gate: filterBackgroundAudio,
+                voiceProfile: voiceProfile,
+                live: true
+            )
+            : rawChunk
 
         let startTime = Date()
         let startedAt = startTime.timeIntervalSince1970
