@@ -100,35 +100,50 @@ final class LiveEditScreenshot {
     }()
 
     private var views: [SelectionView] = []
+    /// Capturing the screens; the overlay shows once it's done.
+    private var starting: Task<Void, Never>?
     private var isDragging = false
-    /// The box being marked up and its screenshot, taken when the box was drawn.
-    private var shot: (view: SelectionView, image: Task<CGImage?, Never>)?
+    /// The box being marked up and its piece of the screen capture.
+    private var shot: (view: SelectionView, image: CGImage)?
 
     private init() {}
 
-    var isShowing: Bool { !self.views.isEmpty }
+    var isShowing: Bool { !self.views.isEmpty || self.starting != nil }
 
+    /// Chromium apps hide hover cards as soon as another window is under the pointer, so the screens are
+    /// captured before the overlay covers them, shown frozen under it, and the box is cut from that capture.
     func begin() {
-        guard self.views.isEmpty else { return }
+        guard self.views.isEmpty, self.starting == nil else { return }
         guard CGPreflightScreenCaptureAccess() else {
             DebugLogger.shared.warning("Hold to Capture Screenshot needs Screen Recording permission", source: "LiveEdit")
             CGRequestScreenCaptureAccess()
             return
         }
-        Self.setsCursorInBackground(true)
-        self.views = NSScreen.screens.map(self.makeView(on:))
-        self.views.forEach { $0.window?.orderFrontRegardless() }
-        // A key panel makes FluidVoice active without bringing it forward, so the toolbar takes clicks.
-        // Ordering the panels out hands typing back to the target app.
-        let mouse = NSEvent.mouseLocation
-        let view = self.views.first { $0.window?.frame.contains(mouse) == true } ?? self.views.first
-        view?.window?.makeKey()
-        view?.updateCursor()
+        self.starting = Task {
+            let captures = await Self.captureScreens()
+            guard !Task.isCancelled else { return }
+            self.starting = nil
+            self.views = NSScreen.screens.compactMap { screen in
+                (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID)
+                    .flatMap { captures[$0] }
+                    .map { self.makeView(on: screen, capture: $0) }
+            }
+            guard !self.views.isEmpty else { return }
+            Self.setsCursorInBackground(true)
+            self.views.forEach { $0.window?.orderFrontRegardless() }
+            // A key panel makes FluidVoice active without bringing it forward, so the toolbar takes clicks and
+            // the crosshair shows. Ordering the panels out hands typing back to the target app.
+            let mouse = NSEvent.mouseLocation
+            let view = self.views.first { $0.window?.frame.contains(mouse) == true } ?? self.views.first
+            view?.window?.makeKey()
+            view?.updateCursor()
+        }
     }
 
     /// The key went up or another modifier joined it: the marked-up box goes into the transcript.
     /// A drag in progress finishes first.
     func modifierReleased() {
+        guard self.starting == nil else { return self.dismiss() }
         guard !self.views.isEmpty, !self.isDragging else { return }
         let shot = self.shot.flatMap { shot in
             shot.view.box.map { box in
@@ -138,8 +153,7 @@ final class LiveEditScreenshot {
         self.dismiss()
         guard let shot else { return }
         Task {
-            guard let screenshot = await shot.image.value else { return }
-            guard let png = LiveEditMarkup.png(screenshot, size: shot.frame.size, marks: shot.marks) else {
+            guard let png = LiveEditMarkup.png(shot.image, size: shot.frame.size, marks: shot.marks) else {
                 DebugLogger.shared.error("Hold to Capture Screenshot could not encode the screenshot", source: "LiveEdit")
                 return
             }
@@ -154,7 +168,6 @@ final class LiveEditScreenshot {
 
     /// Esc: the overlay closes and nothing is attached.
     func cancel() {
-        self.shot?.image.cancel()
         self.dismiss()
     }
 
@@ -189,6 +202,8 @@ final class LiveEditScreenshot {
     }
 
     private func dismiss() {
+        self.starting?.cancel()
+        self.starting = nil
         self.isDragging = false
         self.shot = nil
         self.views.forEach { $0.window?.orderOut(nil) }
@@ -198,7 +213,7 @@ final class LiveEditScreenshot {
         Self.setsCursorInBackground(false)
     }
 
-    private func makeView(on screen: NSScreen) -> SelectionView {
+    private func makeView(on screen: NSScreen, capture: CGImage) -> SelectionView {
         let panel = SelectionPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         panel.backgroundColor = .clear
@@ -210,49 +225,53 @@ final class LiveEditScreenshot {
         view.onDragStart = { [weak self] in self?.isDragging = true }
         view.onBoxStart = { [weak self, weak view] in
             guard let self else { return }
-            self.shot?.image.cancel()
             self.shot = nil
             self.views.filter { $0 !== view }.forEach { $0.clear() }
         }
         view.onBoxDrawn = { [weak self, weak view] rect in
             guard let self, let view else { return }
-            let image = Task { () -> CGImage? in
-                let image = await Self.capture(rect, on: screen)
-                if !Task.isCancelled { view.screenshot = image }
-                return image
-            }
-            self.shot = (view, image)
+            // Display-local pixels with a top-left origin.
+            let scale = CGFloat(capture.width) / screen.frame.width
+            let pixels = CGRect(x: (rect.minX - screen.frame.minX) * scale, y: (screen.frame.maxY - rect.maxY) * scale,
+                                width: rect.width * scale, height: rect.height * scale).integral
+            self.shot = capture.cropping(to: pixels).map { (view, $0) }
         }
         view.onDragEnd = { [weak self] in
             guard let self else { return }
             self.isDragging = false
             if !Self.keysHeld { self.modifierReleased() }
         }
-        panel.contentView = view
+        // The frozen screen under the dimming.
+        let background = NSImageView(frame: view.frame)
+        background.image = NSImage(cgImage: capture, size: screen.frame.size)
+        background.imageScaling = .scaleAxesIndependently
+        background.addSubview(view)
+        panel.contentView = background
         panel.setFrame(screen.frame, display: false)
         return view
     }
 
-    private static func capture(_ rect: NSRect, on screen: NSScreen) async -> CGImage? {
+    /// Every screen at full resolution, keyed by display.
+    private static func captureScreens() async -> [CGDirectDisplayID: CGImage] {
         do {
-            guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return nil }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = content.displays.first(where: { $0.displayID == displayID }) else { return nil }
-            // Leave FluidVoice's notch and this overlay out of the shot.
+            // Leave FluidVoice's notch out of the shot.
             let ownApp = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-            let filter = SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: [])
-            let configuration = SCStreamConfiguration()
-            // Display-local points with a top-left origin.
-            configuration.sourceRect = CGRect(x: rect.minX - screen.frame.minX, y: screen.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
-            let scale = CGFloat(filter.pointPixelScale)
-            configuration.width = Int((rect.width * scale).rounded())
-            configuration.height = Int((rect.height * scale).rounded())
-            configuration.captureResolution = .best
-            configuration.showsCursor = false
-            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            var captures: [CGDirectDisplayID: CGImage] = [:]
+            for display in content.displays {
+                let filter = SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: [])
+                let configuration = SCStreamConfiguration()
+                let scale = CGFloat(filter.pointPixelScale)
+                configuration.width = Int((CGFloat(display.width) * scale).rounded())
+                configuration.height = Int((CGFloat(display.height) * scale).rounded())
+                configuration.captureResolution = .best
+                configuration.showsCursor = false
+                captures[display.displayID] = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            }
+            return captures
         } catch {
             DebugLogger.shared.error("Hold to Capture Screenshot failed: \(error.localizedDescription)", source: "LiveEdit")
-            return nil
+            return [:]
         }
     }
 
@@ -275,12 +294,12 @@ private final class SelectionPanel: NSPanel {
     /// goes back on after every event.
     override func sendEvent(_ event: NSEvent) {
         super.sendEvent(event)
-        (self.contentView as? SelectionView)?.updateCursor()
+        (self.contentView?.subviews.first as? SelectionView)?.updateCursor()
     }
 }
 
-/// One screen's overlay: dims the screen outside the box, labels the box with its size, and once a box
-/// is drawn shows its screenshot under the marks, with the markup bar under it.
+/// One screen's overlay, over its frozen capture: dims the screen outside the box, labels the box with its
+/// size, and once a box is drawn takes marks in it, with the markup bar under it.
 private final class SelectionView: NSView {
     static let colors: [NSColor] = [.systemRed, .systemYellow, .systemBlue, .white]
     /// Kept between captures; the tool starts on the brush each time.
@@ -296,7 +315,6 @@ private final class SelectionView: NSView {
 
     private(set) var box: NSRect?
     private(set) var marks: [LiveEditMarkup.Mark] = []
-    var screenshot: CGImage? { didSet { self.needsDisplay = true } }
     private var drag: (start: NSPoint, current: NSPoint)?
     private lazy var bar = NSHostingView(rootView: self.makeBar())
 
@@ -312,7 +330,6 @@ private final class SelectionView: NSView {
     func clear() {
         self.box = nil
         self.marks = []
-        self.screenshot = nil
         self.bar.isHidden = true
         self.needsDisplay = true
     }
@@ -419,9 +436,6 @@ private final class SelectionView: NSView {
         guard let rect = self.box ?? self.drag.map({ Self.rect($0.start, $0.current) }) else { return }
         NSColor.black.withAlphaComponent(0.01).setFill()
         rect.fill(using: .copy)
-        if let screenshot, let context = NSGraphicsContext.current?.cgContext {
-            context.draw(screenshot, in: rect)
-        }
         // White on a dark hairline shows on light and dark content alike.
         NSColor.black.withAlphaComponent(0.55).setStroke()
         NSBezierPath(rect: rect.insetBy(dx: -0.5, dy: -0.5)).stroke()
