@@ -10,25 +10,32 @@ import Foundation
 // evidence introduced here for Stage C. No unified provider adapter and no assembler exist yet.
 
 /// Stable, string-backed backend identity. Compiled factories only — never a dynamic plugin name.
-nonisolated struct MeetingBackendID: RawRepresentable, Hashable, Codable, Sendable, CustomStringConvertible {
+nonisolated struct MeetingBackendID: RawRepresentable, Hashable, Codable, CustomStringConvertible {
     let rawValue: String
 
     /// Compatibility/rollback backend for sessions that explicitly select the pre-composite path.
     static let legacyCompatibility = MeetingBackendID(rawValue: "legacy-compatibility-v1")
 
-    /// Local Parakeet TDT v2 ASR + Nemotron-3 diarization composite.
+    /// Pro/v3 ASR + Nemotron-3 diarization. Keep the historical identifier so saved
+    /// attempts remain readable; the request records the actual speech model.
     static let parakeetNemotron = MeetingBackendID(rawValue: "local-parakeet-tdt-v2-nemotron-3-v1")
 
     /// Single source of truth for new meeting-processing attempts. Keep explicit stored selections
     /// untouched; this value applies only when no preference has been recorded.
     static let productionDefault: MeetingBackendID = .parakeetNemotron
 
+    /// New attempts use the current model policy, even when an old rollback setting
+    /// is restored from backup. Historical attempts and the saved preference are untouched.
+    var forNewMeetingAttempt: Self {
+        self == .legacyCompatibility ? .productionDefault : self
+    }
+
     var description: String {
         self.rawValue
     }
 }
 
-nonisolated enum MeetingBackendExecutionLocality: String, Codable, Sendable {
+nonisolated enum MeetingBackendExecutionLocality: String, Codable {
     case local
     case hosted
 }
@@ -36,7 +43,7 @@ nonisolated enum MeetingBackendExecutionLocality: String, Codable, Sendable {
 /// Which output shape a backend's `execute` returns. This is the dispatch discriminator: the
 /// pipeline builds and hands over an analysis manifest only to canonical backends, and accepts
 /// only the declared outcome shape back (plan §6, milestones A vs C2b2).
-nonisolated enum MeetingBackendResultContract: String, Codable, Sendable {
+nonisolated enum MeetingBackendResultContract: String, Codable {
     /// The unchanged in-pipeline workflow returns today's `MeetingProcessingResult` directly.
     /// It receives no manifest and does no sidecar work.
     case legacyResult
@@ -47,7 +54,7 @@ nonisolated enum MeetingBackendResultContract: String, Codable, Sendable {
 
 /// Identity/version, platform reach, execution locality, supported final precision, track topology
 /// and the limits a caller must not assume away.
-nonisolated struct MeetingBackendDescriptor: Equatable, Sendable {
+nonisolated struct MeetingBackendDescriptor: Equatable {
     let id: MeetingBackendID
     let version: String
     let execution: MeetingBackendExecutionLocality
@@ -95,7 +102,7 @@ nonisolated struct MeetingBackendDescriptor: Equatable, Sendable {
 /// `Equatable` is load-bearing, not a convenience: the host binds its injected capabilities to one
 /// exact request value and compares the whole thing — session snapshot and configuration included —
 /// rather than spot-checking a directory or a session identifier.
-nonisolated struct MeetingBackendRequest: Equatable, Sendable {
+nonisolated struct MeetingBackendRequest: Equatable {
     let attemptID: UUID
     let session: MeetingSession
     let sessionDirectory: URL
@@ -105,7 +112,7 @@ nonisolated struct MeetingBackendRequest: Equatable, Sendable {
 /// Immutable result of `plan(_:)`, produced before any model work. It also carries the scope that
 /// returned evidence is validated against: a backend may not report text for a track or chunk that
 /// was never planned.
-nonisolated struct MeetingBackendPlan: Sendable {
+nonisolated struct MeetingBackendPlan {
     let backendID: MeetingBackendID
     let backendVersion: String
     let attemptID: UUID
@@ -179,7 +186,7 @@ nonisolated struct MeetingBackendPlan: Sendable {
 }
 
 /// Which part of a returned plan contradicted the host's request or the selected descriptor.
-nonisolated enum MeetingBackendPlanDefect: String, Equatable, Sendable {
+nonisolated enum MeetingBackendPlanDefect: String, Equatable {
     case backendIdentity
     case backendVersion
     case attemptIdentity
@@ -194,7 +201,7 @@ nonisolated enum MeetingBackendPlanDefect: String, Equatable, Sendable {
 /// plus the per-span coverage receipts the assembler reconciles against the analysis manifest.
 /// Receipts are backend self-reports; they are not authoritative until the assembler tiles them
 /// against the manifest (plan §4).
-nonisolated struct MeetingCanonicalResultBundle: Equatable, Sendable {
+nonisolated struct MeetingCanonicalResultBundle: Equatable {
     let evidence: MeetingFinalTranscriptEvidence
     let coverageReceipts: [MeetingSpanCoverageReceipt]
 }
@@ -206,7 +213,7 @@ nonisolated struct MeetingCanonicalResultBundle: Equatable, Sendable {
 /// it is today's already-assembled product result passing through unchanged. `canonicalEvidence`
 /// is the canonical contract: the pipeline validates and assembles the bundle through the
 /// product-owned `MeetingTranscriptAssembler` and persists its result sidecar before returning.
-nonisolated enum MeetingBackendOutcome: Sendable {
+nonisolated enum MeetingBackendOutcome {
     case legacyCompatibility(MeetingProcessingResult)
     case canonicalEvidence(MeetingCanonicalResultBundle)
 }
@@ -261,7 +268,7 @@ protocol MeetingTranscriptionBackend: AnyObject {
     ) async throws -> MeetingBackendOutcome
 }
 
-nonisolated enum MeetingBackendError: LocalizedError, Equatable, Sendable {
+nonisolated enum MeetingBackendError: LocalizedError, Equatable {
     case unknownBackend(MeetingBackendID)
     /// A registered factory produced a backend whose descriptor claims a different identity than the
     /// one that was requested. Selection would otherwise be a lie: the caller asked for one backend

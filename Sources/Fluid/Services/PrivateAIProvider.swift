@@ -2,7 +2,7 @@ import Foundation
 
 typealias PrivateAIStreamHandler = @Sendable (String) -> Void
 
-struct PrivateAIModelArtifact: Sendable, Codable, Hashable {
+struct PrivateAIModelArtifact: Codable, Hashable {
     var identifier: String
     var filename: String
     var downloadURL: URL?
@@ -11,7 +11,7 @@ struct PrivateAIModelArtifact: Sendable, Codable, Hashable {
     var version: String?
 }
 
-struct PrivateAIModelDownloadProgress: Sendable, Equatable {
+struct PrivateAIModelDownloadProgress: Equatable {
     var bytesWritten: Int64
     var totalBytesWritten: Int64
     var totalBytesExpected: Int64?
@@ -124,45 +124,49 @@ enum PrivateAIModelDownloadProgressText {
 
 typealias PrivateAIModelDownloadProgressHandler = @Sendable (PrivateAIModelDownloadProgress) async -> Void
 
-enum PrivateAIModelUpdateState: String, Sendable, Codable, Equatable {
+enum PrivateAIModelUpdateState: String, Codable, Equatable {
     case unavailable
     case notInstalled
     case current
     case updateAvailable
 }
 
-struct PrivateAIModelUpdateStatus: Sendable, Codable, Equatable {
+struct PrivateAIModelUpdateStatus: Codable, Equatable {
     var state: PrivateAIModelUpdateState
     var installedVersion: String?
     var availableVersion: String?
 }
 
-struct PrivateAIModelUpdateToken: Sendable, Hashable {
+struct PrivateAIModelUpdateToken: Hashable {
     let id: UUID
 }
 
-struct PrivateAIRegisteredModel: Sendable, Codable, Hashable, Identifiable {
-    var id: String { self.artifact.identifier }
+struct PrivateAIRegisteredModel: Codable, Hashable, Identifiable {
+    var id: String {
+        self.artifact.identifier
+    }
+
     var displayName: String
     var detail: String
     var isEnabled: Bool
     var parameterCount: String
     var recommendedMemoryGB: Int?
     var artifact: PrivateAIModelArtifact
+    var presentation: PrivateAIModelPresentation?
 
     var canDownload: Bool {
         self.artifact.downloadURL != nil && self.artifact.sha256?.isEmpty == false
     }
 }
 
-enum PrivateAIModelTask: String, Sendable, Codable, Hashable {
+enum PrivateAIModelTask: String, Codable, Hashable {
     case meetingSummary
     case dictation
     case edit
     case command
 }
 
-enum PrivateAIRuntimeState: String, Sendable, Codable, Hashable {
+enum PrivateAIRuntimeState: String, Codable, Hashable {
     case unavailable
     case missingModel
     case configured
@@ -171,7 +175,7 @@ enum PrivateAIRuntimeState: String, Sendable, Codable, Hashable {
     case failed
 }
 
-struct PrivateAIStatus: Sendable, Codable, Equatable {
+struct PrivateAIStatus: Codable, Equatable {
     var state: PrivateAIRuntimeState
     var message: String?
 }
@@ -202,9 +206,15 @@ protocol PrivateAIProviderFeatureProviding: Sendable {
     func isKnownModelID(_ value: String) -> Bool
     func matches(model: String) -> Bool
     func localModelURL(for model: PrivateAIRegisteredModel, directoryURL: URL) -> URL
+    func recommendedModelID(for task: PrivateAIModelTask, on hardware: PrivateAIMacHardware) -> String?
 }
 
+/// Optional catalog advice keeps older providers compatible.
 extension PrivateAIProviderFeatureProviding {
+    func recommendedModelID(for _: PrivateAIModelTask, on _: PrivateAIMacHardware) -> String? {
+        nil
+    }
+
     func selectedModelDefaultsKey(for _: PrivateAIModelTask) -> String {
         self.selectedModelDefaultsKey
     }
@@ -313,7 +323,9 @@ extension PrivateAIIntegrationProviding {
 
     func restoreResidency(_: MeetingResidentModel) async throws {}
 
-    func readsDictationContext(model _: String) -> Bool { false }
+    func readsDictationContext(model _: String) -> Bool {
+        false
+    }
 
     func verifyModel(_ model: PrivateAIRegisteredModel) async throws -> PrivateAIStatus {
         try await self.loadModel(model)
@@ -324,7 +336,9 @@ extension PrivateAIIntegrationProviding {
         return [URL(fileURLWithPath: path)]
     }
 
-    func inactiveInstalledModelURLs(keeping _: PrivateAIRegisteredModel) -> [URL] { [] }
+    func inactiveInstalledModelURLs(keeping _: PrivateAIRegisteredModel) -> [URL] {
+        []
+    }
 
     func prepareModel(_ model: PrivateAIRegisteredModel) async throws -> URL {
         try await self.prepareModel(model, progressHandler: nil)
@@ -467,6 +481,10 @@ enum PrivateAIModelRegistry {
         PrivateAIProviderFeature.shared.modelIDs(for: task)
     }
 
+    nonisolated static func recommendedModelID(for task: PrivateAIModelTask, on hardware: PrivateAIMacHardware) -> String? {
+        PrivateAIProviderFeature.shared.recommendedModelID(for: task, on: hardware)
+    }
+
     nonisolated static func localModelURL(for model: PrivateAIRegisteredModel, directoryURL: URL) -> URL {
         PrivateAIProviderFeature.shared.localModelURL(for: model, directoryURL: directoryURL)
     }
@@ -502,16 +520,36 @@ private struct UnavailablePrivateAIProviderFeature: PrivateAIProviderFeatureProv
     let boostDefaultsKey = "PrivateAIProviderBoostEnabled"
     let modelDirectoryName = "PrivateAIProvider"
 
-    func modelIDs() -> [String] { [] }
-    func model(id _: String) -> PrivateAIRegisteredModel? { nil }
-    func canonicalModelID(for _: String) -> String? { nil }
-    func isKnownModelID(_: String) -> Bool { false }
+    func modelIDs() -> [String] {
+        []
+    }
+
+    func model(id _: String) -> PrivateAIRegisteredModel? {
+        nil
+    }
+
+    func canonicalModelID(for _: String) -> String? {
+        nil
+    }
+
+    func isKnownModelID(_: String) -> Bool {
+        false
+    }
 }
 
 private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProviding {
-    var configuredModelID: String { PrivateAIModelRegistry.defaultModelID }
-    var selectedModel: PrivateAIRegisteredModel { PrivateAIModelRegistry.defaultModel }
-    var configuredLocalModelPath: String? { nil }
+    var configuredModelID: String {
+        PrivateAIModelRegistry.defaultModelID
+    }
+
+    var selectedModel: PrivateAIRegisteredModel {
+        PrivateAIModelRegistry.defaultModel
+    }
+
+    var configuredLocalModelPath: String? {
+        nil
+    }
+
     var modelDirectoryURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
@@ -524,14 +562,21 @@ private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProv
             .appendingPathComponent("Models", isDirectory: true)
     }
 
-    var isLocalRuntimeConfigured: Bool { false }
+    var isLocalRuntimeConfigured: Bool {
+        false
+    }
 
     func expectedLocalModelURL(for model: PrivateAIRegisteredModel) -> URL {
         PrivateAIModelRegistry.localModelURL(for: model, directoryURL: self.modelDirectoryURL)
     }
 
-    func localModelPath(for _: PrivateAIRegisteredModel) -> String? { nil }
-    func isModelInstalled(_: PrivateAIRegisteredModel) -> Bool { false }
+    func localModelPath(for _: PrivateAIRegisteredModel) -> String? {
+        nil
+    }
+
+    func isModelInstalled(_: PrivateAIRegisteredModel) -> Bool {
+        false
+    }
 
     func prepareModel(
         _: PrivateAIRegisteredModel,
@@ -540,7 +585,9 @@ private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProv
         throw PrivateAIUnavailableError()
     }
 
-    func shouldHandleDictation(model _: String) -> Bool { false }
+    func shouldHandleDictation(model _: String) -> Bool {
+        false
+    }
 
     func status(for _: PrivateAIIntegrationService.RuntimeConfiguration) async -> PrivateAIStatus {
         PrivateAIStatus(
@@ -549,7 +596,9 @@ private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProv
         )
     }
 
-    func loadedModelState() async -> PrivateAIIntegrationService.LoadedModelState? { nil }
+    func loadedModelState() async -> PrivateAIIntegrationService.LoadedModelState? {
+        nil
+    }
 
     func loadModel(_: PrivateAIRegisteredModel) async throws -> PrivateAIStatus {
         throw PrivateAIUnavailableError()
@@ -573,7 +622,7 @@ private struct UnavailablePrivateAIIntegrationProvider: PrivateAIIntegrationProv
 
 /// Value-only residency evidence. A late completion from a retired runtime cannot mark its
 /// replacement loaded, and a configured client is never mistaken for a loaded model.
-nonisolated struct PrivateAIConfirmedResidency: Sendable {
+nonisolated struct PrivateAIConfirmedResidency {
     private(set) var generation = UUID()
     private(set) var isResident = false
 
@@ -590,4 +639,21 @@ nonisolated struct PrivateAIConfirmedResidency: Sendable {
         guard generation == self.generation else { return }
         self.isResident = isResident
     }
+}
+
+/// Optional metadata returned by current private providers; older hosts need not display it.
+struct PrivateAIReleaseHighlight: Equatable {
+    var id: String
+    var eyebrow: String
+    var title: String
+    var detail: String
+    var action: String
+    var releaseTitle: String
+    var subtitle: String
+}
+
+struct PrivateAIBoostOption: Equatable {
+    var title: String
+    var detail: String
+    var help: String
 }

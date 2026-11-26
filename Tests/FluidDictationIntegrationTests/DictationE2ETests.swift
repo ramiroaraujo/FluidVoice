@@ -255,7 +255,7 @@ final class DictationE2ETests: XCTestCase {
         )
 
         XCTAssertEqual(state.replacements.count, 1)
-        XCTAssertEqual(state.replacements.first?.triggers, ["fluid voice", "fluid boys"])
+        XCTAssertEqual(state.replacements.first?.triggers, ["Fluid Voice", "FLUID BOYS"])
         XCTAssertEqual(state.replacements.first?.replacement, "FluidVoice")
         XCTAssertEqual(state.customWords.map(\.text), ["FluidVoice", "Barath"])
         XCTAssertEqual(state.customWords.map(\.weight), [10.0, 10.0])
@@ -1948,6 +1948,11 @@ extension DictationE2ETests {
             XCTAssertNil(settings.selectedModel)
             XCTAssertEqual(settings.commandModeSelectedProviderID, "")
             XCTAssertNil(settings.commandModeSelectedModel)
+            settings.commandModeSelectedProviderID = "apple-intelligence"
+            settings.commandModeSelectedModel = "System Language Model"
+            settings.purgeRetiredAppleIntelligenceState()
+            XCTAssertEqual(settings.commandModeSelectedProviderID, "apple-intelligence")
+            XCTAssertEqual(settings.commandModeSelectedModel, "System Language Model")
             XCTAssertEqual(settings.rewriteModeSelectedProviderID, "")
             XCTAssertNil(settings.rewriteModeSelectedModel)
             XCTAssertNil(settings.availableModelsByProvider["apple-intelligence"])

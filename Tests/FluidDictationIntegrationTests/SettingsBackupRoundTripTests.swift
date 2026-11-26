@@ -40,6 +40,62 @@ final class SettingsBackupRoundTripTests: XCTestCase {
         }
     }
 
+    func testImportWarningMatchesTheFileTranscriptPayload() {
+        let date = Date(timeIntervalSince1970: 1_800_000_100)
+        func warning(_ count: Int?) -> String {
+            SettingsView.backupImportConfirmation(exportedAt: date, fileTranscriptCount: count).informativeText
+        }
+        XCTAssertFalse(warning(nil).contains("file transcripts"))
+        XCTAssertTrue(warning(0).contains("will clear your saved file transcripts"))
+        XCTAssertTrue(warning(1).contains("will replace your saved file transcripts"))
+    }
+
+    func testFileTranscriptionsRoundTripThroughBackupAndRestoreIntoStore() throws {
+        let entry = FileTranscriptionEntry(
+            timestamp: Date(timeIntervalSince1970: 1_800_000_000),
+            fileName: "call.mov",
+            duration: 61,
+            processingTime: 4,
+            confidence: 0.9,
+            text: "Speaker 1: hi\n\nSpeaker 2: hello",
+            speakerSegments: [
+                SpeakerTranscriptSegment(speaker: "Speaker 1", startSeconds: 0, endSeconds: 2, text: "hi"),
+                SpeakerTranscriptSegment(speaker: "Speaker 2", startSeconds: 2, endSeconds: 4, text: "hello"),
+            ]
+        )
+        let document = AppBackupDocument(
+            schemaVersion: .current,
+            appVersion: "fixture",
+            exportedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            settings: SettingsStore.shared.makeBackupPayload(),
+            promptProfiles: [],
+            appPromptBindings: [],
+            transcriptionHistory: [],
+            pronunciationProfiles: [],
+            fileTranscriptionHistory: [entry]
+        )
+        let encoded = try BackupService.shared.encode(document)
+        XCTAssertEqual(try BackupService.shared.decode(encoded).fileTranscriptionHistory, [entry])
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "fileTranscriptionHistory")
+        let legacyDocument = try BackupService.shared.decode(JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(legacyDocument.fileTranscriptionHistory)
+
+        let suiteName = "FileTranscriptionBackupTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = FileTranscriptionHistoryStore(defaults: defaults)
+        var stale = entry
+        stale.searchRevision = .max - 1
+        store.restore(from: [stale])
+        store.restore(from: [entry])
+        XCTAssertEqual(store.entries.map(\.text), [entry.text])
+        XCTAssertEqual(store.entries.first?.speakerSegments, entry.speakerSegments)
+        XCTAssertEqual(store.entries.first?.searchRevision, .max, "restored text must re-index over the previous revision")
+        XCTAssertEqual(FileTranscriptionHistoryStore(defaults: defaults).entries.map(\.id), [entry.id], "restore persists")
+    }
+
     func testLegacyAbsentFieldsPreserveCurrentPreferences() throws {
         try self.withSavedDefaults {
             let settings = SettingsStore.shared
@@ -51,12 +107,33 @@ final class SettingsBackupRoundTripTests: XCTestCase {
             let meeting = self.meetingDefaults()
             let configurations = self.configurations(profileID: profile.id)
             settings.meetingRecordingDefaults = meeting
+            let recentApplication = MeetingApplicationIdentity(bundleIdentifier: "fixture.recent", processID: 55, displayName: "Recent")
+            settings.meetingRecentApplication = recentApplication
             settings.privateAIIdleUnload = .thirtyMinutes
             settings.dictationPromptConfigurations = configurations
             settings.restore(from: payload, promptProfiles: [profile], appPromptBindings: [])
             XCTAssertEqual(settings.meetingRecordingDefaults, meeting)
+            XCTAssertEqual(settings.meetingRecentApplication, recentApplication)
             XCTAssertEqual(settings.privateAIIdleUnload, .thirtyMinutes)
             XCTAssertEqual(settings.dictationPromptConfigurations, configurations)
+        }
+    }
+
+    func testRestoredMeetingSourceSupersedesPreviousAppChoice() throws {
+        try self.withSavedDefaults {
+            let settings = SettingsStore.shared
+            var meeting = self.meetingDefaults()
+            meeting.mode = .onlineCall
+            settings.meetingRecordingDefaults = meeting
+            let payload = settings.makeBackupPayload()
+            settings.meetingRecentApplication = MeetingApplicationIdentity(bundleIdentifier: "fixture.stale", processID: 55, displayName: "Old app")
+            settings.restore(from: payload)
+            XCTAssertNil(settings.meetingRecentApplication)
+            XCTAssertEqual(settings.meetingRecordingDefaults, meeting)
+            let effective = settings.meetingRecordingDefaults.preferringLastPickedApplication(settings.meetingRecentApplication)
+            XCTAssertEqual(effective.applicationBundleIdentifier, meeting.applicationBundleIdentifier)
+            XCTAssertEqual(effective.microphoneCaptureDeviceID, meeting.microphoneCaptureDeviceID)
+            XCTAssertEqual(effective.languageCode, meeting.languageCode)
         }
     }
 

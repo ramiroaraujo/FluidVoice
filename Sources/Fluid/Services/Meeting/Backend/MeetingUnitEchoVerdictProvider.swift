@@ -46,14 +46,12 @@ nonisolated struct MeetingTextOverlapEchoVerdictProvider: MeetingUnitEchoVerdict
     private let tolerance = MeetingAnalysisManifestSchema.mappingToleranceSeconds
     private let wordContextSeconds: TimeInterval = 2
 
-    init() {}
-
     func echoVerdicts(
         for evidence: MeetingFinalTranscriptEvidence,
         manifest: MeetingAnalysisManifest,
         plan _: MeetingBackendPlan
     ) async throws -> [String: MeetingUnitEchoVerdict] {
-        guard manifest.captureMode == .onlineCall else { return [:] }
+        guard manifest.captureMode.capturesComputerAudio else { return [:] }
 
         struct PositionedUnit {
             let unit: MeetingFinalTextUnit

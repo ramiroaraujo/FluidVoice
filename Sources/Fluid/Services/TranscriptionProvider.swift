@@ -1,13 +1,13 @@
 import Foundation
 
-nonisolated enum ModelPreparationPhase: Sendable, Equatable {
+nonisolated enum ModelPreparationPhase: Equatable {
     case preparingDownload
     case downloading
     case optimizing
     case loading
 }
 
-nonisolated struct ModelPreparationProgress: Sendable, Equatable {
+nonisolated struct ModelPreparationProgress: Equatable {
     let phase: ModelPreparationPhase
     let fractionCompleted: Double?
 
@@ -134,7 +134,7 @@ struct ASRTranscriptionResult {
     }
 }
 
-nonisolated struct ASRWordTiming: Sendable {
+nonisolated struct ASRWordTiming {
     let text: String
     let start: TimeInterval
     let end: TimeInterval
@@ -198,13 +198,24 @@ protocol TranscriptionProvider {
     var shouldClearCacheAfterCancellation: Bool { get }
 }
 
-// Default implementation for optional methods
+/// Default implementation for optional methods
 extension TranscriptionProvider {
-    func modelsExistOnDisk() -> Bool { return false }
+    func modelsExistOnDisk() -> Bool {
+        return false
+    }
+
     func clearCache() async throws {}
-    var shouldClearCacheAfterCancellation: Bool { true }
-    var prefersNativeFileTranscription: Bool { false }
-    var supportsWordTimings: Bool { false }
+    var shouldClearCacheAfterCancellation: Bool {
+        true
+    }
+
+    var prefersNativeFileTranscription: Bool {
+        false
+    }
+
+    var supportsWordTimings: Bool {
+        false
+    }
 
     func transcribeWithWordTimings(_ samples: [Float]) async throws -> (result: ASRTranscriptionResult, words: [ASRWordTiming]) {
         try (await self.transcribe(samples), [])

@@ -27,7 +27,9 @@ struct OverlayCaptionReveal {
     private var boundaries: [Int] = []
     private var deadline: CFTimeInterval = 0
 
-    var hasPendingWords: Bool { self.displayed != self.target }
+    var hasPendingWords: Bool {
+        self.displayed != self.target
+    }
 
     mutating func update(_ target: OverlayCaptionText, now: CFTimeInterval) {
         guard target != self.target else { return }
@@ -58,7 +60,9 @@ struct OverlayCaptionReveal {
         self.show(through: remaining[min(count, remaining.count) - 1])
     }
 
-    mutating func finish() { self.displayed = self.target }
+    mutating func finish() {
+        self.displayed = self.target
+    }
 
     private mutating func show(through end: Int) {
         guard let range = Range(NSRange(location: 0, length: end), in: self.target.text) else { return }
@@ -141,7 +145,7 @@ final class OverlayCaptionLayout {
     let container: NSTextContainer
     private(set) var lines: [Line] = []
     let lineHeight: CGFloat
-    // All production caption sizes, measured once; waveform refreshes need no text layout.
+    /// All production caption sizes, measured once; waveform refreshes need no text layout.
     private static let lineHeights: [CGFloat: CGFloat] = {
         let manager = NSLayoutManager()
         return Dictionary(uniqueKeysWithValues: [9.0, 10, 11, 13, 15].map { size in
@@ -172,7 +176,9 @@ final class OverlayCaptionLayout {
         }
     }
 
-    var height: CGFloat { ceil(self.lines.last?.rect.maxY ?? self.lineHeight) }
+    var height: CGFloat {
+        ceil(self.lines.last?.rect.maxY ?? self.lineHeight)
+    }
 
     func viewportHeight(maxHeight: CGFloat, maxLines: Int?) -> CGFloat {
         Self.viewportHeight(lineHeight: self.lineHeight, maxHeight: maxHeight, maxLines: maxLines)
@@ -255,8 +261,13 @@ final class OverlayCaptionNSView: NSView {
     static let revealDuration: CFTimeInterval = 0.125
     private static let scrollAnimationKey = "captionScroll"
 
-    override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
+    override var isFlipped: Bool {
+        true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -272,7 +283,9 @@ final class OverlayCaptionNSView: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

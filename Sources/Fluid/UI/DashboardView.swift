@@ -14,9 +14,18 @@ struct DashboardLayout {
         self.contentWidth = max(0, min(width, Self.maximumWidth) - Self.inset * 2)
     }
 
-    var hasActionColumn: Bool { self.contentWidth >= 640 + Self.gap + Self.actionWidth }
-    var mainWidth: CGFloat { self.hasActionColumn ? self.contentWidth - Self.gap - Self.actionWidth : self.contentWidth }
-    var hasHorizontalActions: Bool { !self.hasActionColumn && self.contentWidth >= 620 }
+    var hasActionColumn: Bool {
+        self.contentWidth >= 640 + Self.gap + Self.actionWidth
+    }
+
+    var mainWidth: CGFloat {
+        self.hasActionColumn ? self.contentWidth - Self.gap - Self.actionWidth : self.contentWidth
+    }
+
+    var hasHorizontalActions: Bool {
+        !self.hasActionColumn && self.contentWidth >= 620
+    }
+
     func setupColumns(count: Int) -> Int {
         guard count > 0 else { return 1 }
         return self.contentWidth >= CGFloat(count) * 280 + CGFloat(count - 1) * 10 ? count : 1
@@ -50,7 +59,9 @@ struct DashboardSetupStatus {
 /// Home reuses the history and stats snapshots; no polling or duplicate aggregation.
 struct DashboardView: View {
     @ObservedObject var asr: ASRService
+    @ObservedObject var meetingHistory: MeetingHistorySnapshot
     @Binding var selectedSidebarItem: SidebarItem?
+    @Binding var requestedMeetingRoute: MeetingRoute?
     let accessibilityEnabled: Bool
     let openAccessibilitySettings: () -> Void
     let openFluidIntelligenceDemo: () -> Void
@@ -62,6 +73,7 @@ struct DashboardView: View {
     @ObservedObject private var contentState = NotchContentState.shared
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @StateObject private var recommendations: DashboardRecommendationsController
     @StateObject private var screenPermission = DictationScreenPermissionController()
     @State private var screenPermissionRequestTask: Task<Void, Never>?
     @State private var statsOwner = UUID()
@@ -70,9 +82,39 @@ struct DashboardView: View {
     @FocusState private var statisticsFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var busy: Bool { self.asr.isRunning || self.asr.isStarting || self.contentState.isProcessing }
-    private var shortcut: String { self.settings.primaryDictationShortcutDisplayString }
-    private var supportsScreenContext: Bool { PrivateAIProviderFeature.shared.isAvailable && CPUArchitecture.isAppleSilicon }
+    init(
+        asr: ASRService,
+        meetingHistory: MeetingHistorySnapshot,
+        selectedSidebarItem: Binding<SidebarItem?>,
+        requestedMeetingRoute: Binding<MeetingRoute?>,
+        accessibilityEnabled: Bool,
+        openAccessibilitySettings: @escaping () -> Void,
+        openFluidIntelligenceDemo: @escaping () -> Void,
+        openShortcutSettings: @escaping () -> Void,
+        recommendations: DashboardRecommendationsController? = nil
+    ) {
+        self.asr = asr
+        self.meetingHistory = meetingHistory
+        self._selectedSidebarItem = selectedSidebarItem
+        self._requestedMeetingRoute = requestedMeetingRoute
+        self.accessibilityEnabled = accessibilityEnabled
+        self.openAccessibilitySettings = openAccessibilitySettings
+        self.openFluidIntelligenceDemo = openFluidIntelligenceDemo
+        self.openShortcutSettings = openShortcutSettings
+        self._recommendations = StateObject(wrappedValue: recommendations ?? DashboardRecommendationsController(asr: asr))
+    }
+
+    private var busy: Bool {
+        self.asr.isRunning || self.asr.isStarting || self.contentState.isProcessing
+    }
+
+    private var shortcut: String {
+        self.settings.primaryDictationShortcutDisplayString
+    }
+
+    private var supportsScreenContext: Bool {
+        PrivateAIProviderFeature.shared.isAvailable && CPUArchitecture.isAppleSilicon
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -86,12 +128,12 @@ struct DashboardView: View {
                             HStack(alignment: .top, spacing: 28) {
                                 self.mainColumn(layout: layout)
                                     .frame(maxWidth: .infinity)
-                                self.quickActions(horizontal: false)
+                                self.actionColumn(horizontal: false)
                                     .frame(width: DashboardLayout.actionWidth)
                             }
                         } else {
                             self.mainColumn(layout: layout)
-                            self.quickActions(horizontal: layout.hasHorizontalActions)
+                            self.actionColumn(horizontal: layout.hasHorizontalActions)
                         }
                     }
                     .padding(DashboardLayout.inset)
@@ -109,7 +151,13 @@ struct DashboardView: View {
             self.greeting = name.isEmpty ? "\(salutation)." : "\(salutation), \(name)."
         }
         .task { if self.supportsScreenContext { await self.screenPermission.refresh() } }
+        .task(id: self.settings.fluidMeetEnabled) {
+            if self.settings.fluidMeetEnabled { await self.meetingHistory.refresh() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if self.settings.fluidMeetEnabled {
+                Task { await self.meetingHistory.refresh() }
+            }
             guard self.supportsScreenContext else { return }
             Task { await self.screenPermission.refresh() }
         }
@@ -117,6 +165,7 @@ struct DashboardView: View {
             if busy { self.screenPermissionRequestTask?.cancel() }
         }
         .onDisappear {
+            self.recommendations.operation.cancel()
             self.stats.deactivate(self.statsOwner)
             self.screenPermissionRequestTask?.cancel()
         }
@@ -143,6 +192,9 @@ struct DashboardView: View {
                 self.intelligenceInvitation
             }
             self.recents
+            if self.settings.fluidMeetEnabled {
+                self.recentMeetings
+            }
         }
     }
 
@@ -220,6 +272,58 @@ struct DashboardView: View {
         }
     }
 
+    private var recentMeetings: some View {
+        let sessions = Array(self.meetingHistory.sessions.lazy.filter { $0.state == .completed }.prefix(4))
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Recent meeting transcriptions").font(self.theme.typography.sectionTitle)
+                Spacer()
+                Button("View all") { self.openMeetings(.home) }
+                    .buttonStyle(.plain).foregroundStyle(self.theme.palette.accent)
+                    .disabled(self.busy)
+                    .accessibilityLabel("View all meetings")
+            }
+            ThemedCard(style: .subtle, padding: 0) {
+                if !self.meetingHistory.hasLoaded {
+                    ProgressView("Loading meetings…").frame(maxWidth: .infinity).padding(32)
+                } else if let errorMessage = self.meetingHistory.errorMessage, sessions.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(errorMessage).font(self.theme.typography.bodySmall).foregroundStyle(.secondary)
+                        Button("Try again") { Task { await self.meetingHistory.refresh() } }
+                            .buttonStyle(.borderless).foregroundStyle(self.theme.palette.accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                } else if sessions.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "person.2.wave.2").font(.fluidSystem(size: 24)).foregroundStyle(self.theme.palette.accent)
+                        Text("Your meetings, transcribed").font(self.theme.typography.bodyStrong)
+                        Text("Record a meeting in FluidMeet to see its transcript here.")
+                            .font(self.theme.typography.bodySmall).foregroundStyle(.secondary)
+                        Button("Open FluidMeet") { self.openMeetings(.home) }
+                            .buttonStyle(.borderless).foregroundStyle(self.theme.palette.accent)
+                            .disabled(self.busy)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(sessions) { session in
+                            DashboardRecentMeetingRow(session: session) { self.openMeetings(.meeting(session.id)) }
+                                .disabled(self.busy)
+                            if session.id != sessions.last?.id {
+                                Divider().opacity(0.4).padding(.horizontal, 18)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func openMeetings(_ route: MeetingRoute) {
+        self.requestedMeetingRoute = route
+        self.selectedSidebarItem = .meetingTranscription
+    }
+
     private struct SetupItem {
         let title: String
         let icon: String
@@ -282,6 +386,13 @@ struct DashboardView: View {
         self.screenPermissionRequestTask = Task {
             defer { self.screenPermissionRequestTask = nil }
             await self.screenPermission.requestIfNeeded { !self.busy && !Task.isCancelled }
+        }
+    }
+
+    private func actionColumn(horizontal: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 24) {
+            self.quickActions(horizontal: horizontal)
+            DashboardRecommendationsView(asr: self.asr, controller: self.recommendations)
         }
     }
 
@@ -442,6 +553,44 @@ private struct DashboardRecentRow: View {
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             self.copied = false
         }
+    }
+}
+
+private struct DashboardRecentMeetingRow: View {
+    let session: MeetingSession
+    let action: () -> Void
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: self.action) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.wave.2")
+                    .foregroundStyle(self.theme.palette.accent)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(self.session.title).font(self.theme.typography.bodySmallStrong).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(Duration.seconds(max(0, self.session.duration)).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated, maximumUnitCount: 2)))
+                        Text("·")
+                        Text(self.session.startedAt, style: .date)
+                    }
+                    .font(self.theme.typography.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.fluidSystem(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(18)
+            .background(self.theme.palette.accent.opacity(self.hovered && self.isEnabled ? 0.06 : 0))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { self.hovered = $0 }
+        .help("Open meeting transcript")
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the meeting transcript in FluidMeet")
     }
 }
 

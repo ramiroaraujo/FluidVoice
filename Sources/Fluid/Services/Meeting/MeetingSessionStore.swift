@@ -18,10 +18,15 @@ nonisolated protocol MeetingSessionStoring: Sendable {
     func deleteAudioFiles(for id: MeetingSessionID) async throws
 }
 
-// Test/custom stores retain their existing behavior unless they provide the lighter reads.
+/// Test/custom stores retain their existing behavior unless they provide the lighter reads.
 nonisolated extension MeetingSessionStoring {
-    func loadHistory() async throws -> [MeetingSession] { try await self.loadAll() }
-    func loadTranscript(id: MeetingSessionID) async throws -> MeetingSession? { try await self.load(id: id) }
+    func loadHistory() async throws -> [MeetingSession] {
+        try await self.loadAll()
+    }
+
+    func loadTranscript(id: MeetingSessionID) async throws -> MeetingSession? {
+        try await self.load(id: id)
+    }
 }
 
 private final nonisolated class MeetingSessionFileSystem: @unchecked Sendable {
@@ -49,8 +54,25 @@ actor MeetingSessionStore: MeetingSessionStoring {
     private let decoder: JSONDecoder
     private var tombstonedIDs: Set<MeetingSessionID> = []
 
+    #if DEBUG
+    /// XCTest launches the real app host as well as the fixture coordinators. Its startup
+    /// maintenance must never see recordings belonging to the person running the tests.
+    private static let testHostRoot: URL? = {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment.keys.contains(where: { $0.hasPrefix("XCTest") })
+            || NSClassFromString("XCTestCase") != nil
+        else { return nil }
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("FluidVoice-XCTest-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("Meetings", isDirectory: true)
+    }()
+    #endif
+
     init(rootDirectory: URL? = nil, fileManager: FileManager = .default) {
         self.fileSystem = MeetingSessionFileSystem(manager: fileManager)
+        #if DEBUG
+        let rootDirectory = rootDirectory ?? Self.testHostRoot
+        #endif
         if let rootDirectory {
             self.rootDirectory = rootDirectory
         } else {
@@ -393,7 +415,7 @@ actor MeetingSessionStore: MeetingSessionStoring {
             return session
         }
 
-        let expectedKinds: Set<MeetingAudioTrackKind> = session.mode == .onlineCall
+        let expectedKinds: Set<MeetingAudioTrackKind> = session.mode.capturesComputerAudio
             ? [.applicationAudio, .microphone]
             : [.microphone]
         let sessionDirectory = self.sessionDirectoryURL(for: session.id)

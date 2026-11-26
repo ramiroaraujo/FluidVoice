@@ -7,7 +7,7 @@ import Vision
 /// Raw text around a dictation, for models trained to read it.
 /// Fluid Intelligence picks the useful words and writes the prompt lines,
 /// so nothing here formats them.
-nonisolated struct DictationTypingContext: Sendable, Equatable {
+nonisolated struct DictationTypingContext: Equatable {
     var textBeforeCursor: String?
     // One Accessibility element or OCR line per entry; nil means none was read.
     // swiftlint:disable:next discouraged_optional_collection
@@ -19,7 +19,7 @@ nonisolated struct DictationTypingContext: Sendable, Equatable {
 
 /// A piece of text in the front window and where it is. Stays on this Mac and is
 /// never logged or kept.
-nonisolated struct EditModeWindowLine: Sendable, Equatable {
+nonisolated struct EditModeWindowLine: Equatable {
     let text: String
     let x: Int
     let y: Int
@@ -629,7 +629,9 @@ nonisolated struct EditModeWindowLines {
     private var characterCount = 0
     private var placed: [String: [CGRect]] = [:]
 
-    var isFull: Bool { self.lines.count >= Self.maxLines || self.characterCount >= Self.maxCharacters }
+    var isFull: Bool {
+        self.lines.count >= Self.maxLines || self.characterCount >= Self.maxCharacters
+    }
 
     mutating func add(_ text: String, frame: CGRect) {
         let rows = text.split(whereSeparator: \.isNewline)

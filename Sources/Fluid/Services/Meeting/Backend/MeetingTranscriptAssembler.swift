@@ -317,7 +317,7 @@ nonisolated struct MeetingTranscriptAssembler {
                 continue
             }
 
-            if manifest.captureMode == .onlineCall,
+            if manifest.captureMode.capturesComputerAudio,
                manifest.track(unit.trackID)?.kind == .microphone
             {
                 guard let verdict = input.echoVerdicts[unit.id] else {
@@ -743,8 +743,10 @@ nonisolated struct MeetingTranscriptAssembler {
             let identity = canonicalByToken[token] ?? token
             return isSubstantial(identity) || !tracksWithSubstantialSpeaker.contains(identity.analysisEpochID.trackID)
         }
-        let ordinals = Dictionary(uniqueKeysWithValues: speakingTokens.filter { canonicalByToken[$0] == nil }
-            .enumerated().map { ($0.element, $0.offset + 1) })
+        let ordinals = Dictionary(
+            uniqueKeysWithValues: speakingTokens.filter { canonicalByToken[$0] == nil }
+                .enumerated().map { ($0.element, $0.offset + 1) }
+        )
         return speakingTokens.map { token in
             let canonical = canonicalByToken[token] ?? token
             let normalizedLabel = canonical.label.precomposedStringWithCanonicalMapping

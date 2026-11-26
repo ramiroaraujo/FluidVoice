@@ -5,7 +5,10 @@ enum PrivateAIUpcomingModel: String, CaseIterable, Identifiable {
     case quad = "preview-upcoming-quad"
     case multilingual = "preview-upcoming-multilingual"
 
-    var id: String { self.rawValue }
+    var id: String {
+        self.rawValue
+    }
+
     var title: String {
         switch self {
         case .quad: "Fluid 1 Quad"
@@ -22,7 +25,7 @@ enum PrivateAIUpcomingModel: String, CaseIterable, Identifiable {
 }
 
 /// Customer-facing copy only. Registry IDs, downloads, and runtime settings remain authoritative.
-struct PrivateAIModelPresentation {
+struct PrivateAIModelPresentation: Codable, Hashable {
     let summary: String
     let useCase: String
     var language: String = "On-device"
@@ -31,6 +34,8 @@ struct PrivateAIModelPresentation {
     var speed: Int?
     /// A small label above the name, such as "Research preview".
     var badge: String?
+    var shortName: String?
+    var analyticsLabel: String?
 
     static func forModel(id: String) -> Self {
         switch id {

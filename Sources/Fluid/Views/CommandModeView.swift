@@ -22,6 +22,7 @@ struct CommandModeView: View {
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var chatStore = ChatHistoryStore.shared
     @Environment(\.theme) private var theme
+    @Environment(\.fluidPagePrewarmState) private var prewarmState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var onClose: (() -> Void)?
 
@@ -44,12 +45,19 @@ struct CommandModeView: View {
     @State private var isThinkingExpanded = false
     @FocusState private var composerFocused: Bool
 
-    private var asr: ASRService { self.appServices.asr }
+    private var asr: ASRService {
+        self.appServices.asr
+    }
+
     private var inputText: Binding<String> {
         Binding(
             get: { self.drafts.text(for: self.service.currentChatID) },
             set: { self.drafts.set($0, for: self.service.currentChatID) }
         )
+    }
+
+    private var isPrewarming: Bool {
+        self.prewarmState?.isPrewarming == true
     }
 
     var body: some View {
@@ -106,10 +114,11 @@ struct CommandModeView: View {
         }
         .background(self.theme.palette.windowBackground)
         .clipped()
-        .onAppear {
-            self.updatePresentationActivity(self.isActive)
+        .onFluidPagePresented { self.updatePresentationActivity(self.isActive) }
+        .onDisappear {
+            guard !self.isPrewarming else { return }
+            self.updatePresentationActivity(false)
         }
-        .onDisappear { self.updatePresentationActivity(false) }
         .onChange(of: self.isActive) { _, active in self.updatePresentationActivity(active) }
         .onChange(of: self.compactHistoryPresented) { _, presented in
             if presented { self.composerFocused = false }
@@ -123,6 +132,9 @@ struct CommandModeView: View {
         }
         .onChange(of: self.chatStore.sessions.map(\.id)) { _, ids in self.drafts.retain(sessionIDs: ids) }
         .onReceive(self.settings.objectWillChange.debounce(for: .milliseconds(80), scheduler: RunLoop.main)) { _ in
+            if self.isPresentationActive { self.refreshModelCatalog() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             if self.isPresentationActive { self.refreshModelCatalog() }
         }
         .onChange(of: self.canChangeSession) { _, canChange in
@@ -509,7 +521,10 @@ struct CommandModeView: View {
         return nil
     }
 
-    private var canChangeSession: Bool { self.sessionBlockingReason == nil }
+    private var canChangeSession: Bool {
+        self.sessionBlockingReason == nil
+    }
+
     private var canSubmitCommand: Bool {
         !self.inputText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !self.compactHistoryPresented && self.canChangeSession && self.settings.commandModeReadinessIssue == nil
@@ -598,7 +613,7 @@ struct CommandModeView: View {
     }
 
     private func refreshModelCatalog() {
-        let options = self.settings.commandModeModelCatalog()
+        let options = self.settings.commandModeModelCatalog(includeAppleIntelligence: true)
         let providerKey = ModelRepository.shared.providerKey(for: self.settings.effectiveCommandModeProviderID)
         let modelID = self.settings.effectiveCommandModeSelectedModel
         let selected = options.first {

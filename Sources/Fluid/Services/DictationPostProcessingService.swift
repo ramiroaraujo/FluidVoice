@@ -34,7 +34,7 @@ struct DictationProviderRoute: Equatable {
 
     /// Model routing without credentials or private-model installation checks.
     /// The overlay can snapshot this on main and resolve its display name off main.
-    enum ModelChoice: Equatable, Sendable {
+    enum ModelChoice: Equatable {
         case none
         case privateAI
         case provider(String, String?)
@@ -249,11 +249,6 @@ final class DictationPostProcessingService {
     }
 
     func process(_ inputText: String, dictationSlot: SettingsStore.DictationShortcutSlot = .primary) async throws -> Result {
-        guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
-            throw MeetingModelResidencyError.busy
-        }
-        defer { MeetingSummaryActivityCoordinator.shared.endProcessing(summaryActivity) }
-
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return Result(text: "", providerID: SettingsStore.shared.selectedProviderID, model: "")
@@ -283,6 +278,11 @@ final class DictationPostProcessingService {
         if allowsPrivateAIRoute,
            resolved.usesPrivateAI || PrivateAIIntegrationService.shouldHandleDictation(model: resolved.model)
         {
+            // Only the local LLM is unloaded during an on-device meeting summary.
+            guard let summaryActivity = MeetingSummaryActivityCoordinator.shared.beginProcessing() else {
+                throw MeetingModelResidencyError.busy
+            }
+            defer { MeetingSummaryActivityCoordinator.shared.endProcessing(summaryActivity) }
             let response = try await PrivateAIIntegrationService.shared.enhanceDictation(
                 trimmed,
                 runtime: PrivateAIIntegrationService.RuntimeConfiguration(

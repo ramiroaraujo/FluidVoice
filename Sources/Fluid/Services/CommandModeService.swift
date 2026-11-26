@@ -17,7 +17,7 @@ final class CommandModeService: ObservableObject {
     private var currentTurnCount = 0
     private let maxTurns = 20
 
-    // Flag to enable notch output display
+    /// Flag to enable notch output display
     var enableNotchOutput: Bool = true
 
     // Streaming UI update throttling - adaptive rate based on content length
@@ -75,6 +75,14 @@ final class CommandModeService: ObservableObject {
             case user
             case assistant
             case tool
+
+            var appleRole: AppleIntelligenceTurn.Role {
+                switch self {
+                case .user: return .user
+                case .assistant: return .assistant
+                case .tool: return .tool
+                }
+            }
         }
 
         enum StepType: Equatable {
@@ -748,12 +756,10 @@ final class CommandModeService: ObservableObject {
         // A command already dispatched cannot be undone. Record its actual outcome
         // even if Escape suppresses every subsequent agent turn and visible output.
         // Create enhanced result with context
-        let enhancedResult = EnhancedCommandResult(
+        let resultJSON = await EnhancedCommandResult(
             result: result,
             purpose: purpose
-        )
-
-        let resultJSON = enhancedResult.toJSON()
+        ).toJSON()
 
         // Determine result step type
         let resultStepType: Message.StepType = result.success ? .success : .failure
@@ -776,7 +782,7 @@ final class CommandModeService: ObservableObject {
 
     // MARK: - Enhanced Result
 
-    private struct EnhancedCommandResult: Codable {
+    private nonisolated struct EnhancedCommandResult: Codable {
         let success: Bool
         let command: String
         let output: String
@@ -795,7 +801,9 @@ final class CommandModeService: ObservableObject {
             self.purpose = purpose
         }
 
-        func toJSON() -> String {
+        /// Command output can be large; encode it off the main actor.
+        @concurrent
+        func toJSON() async -> String {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             if let data = try? encoder.encode(self),
@@ -829,6 +837,20 @@ final class CommandModeService: ObservableObject {
         let settings = SettingsStore.shared
         if let issue = settings.commandModeReadinessIssue {
             throw LLMError.invalidRequest(issue)
+        }
+
+        if settings.effectiveCommandModeProviderID == AppleIntelligenceAvailability.providerID {
+            self.streamingText = ""
+            self.streamingThinkingText = ""
+            let history = self.conversationHistory.map {
+                (role: $0.role.appleRole, content: $0.content, call: $0.toolCall.map {
+                    AppleIntelligenceCall(id: $0.id, command: $0.command, workingDirectory: $0.workingDirectory, purpose: $0.purpose)
+                })
+            }
+            let reply = try await AppleIntelligenceCommandProvider.respond(to: AppleIntelligenceTurn.turns(history))
+            return LLMResponse(content: reply.content, thinking: nil, toolCall: reply.call.map {
+                LLMResponse.ToolCallData(id: $0.id, command: $0.command, workingDirectory: $0.workingDirectory, purpose: $0.purpose)
+            })
         }
 
         let providerID = settings.effectiveCommandModeProviderID
@@ -1098,6 +1120,13 @@ final class CommandModeService: ObservableObject {
 
         // Convert LLMClient.Response to our internal LLMResponse
         // Check for tool calls
+        if response.toolCalls.count > 1 {
+            // History holds one call per assistant turn; the model sees this result and continues.
+            DebugLogger.shared.info(
+                "Model returned \(response.toolCalls.count) parallel tool calls; running the first",
+                source: "CommandModeService"
+            )
+        }
         if let tc = response.toolCalls.first,
            tc.name == "execute_terminal_command"
         {

@@ -3,7 +3,7 @@ import Foundation
 /// Runs the bundled `fv-serve` for real and reports what it says, so the settings page can show
 /// proof that the command works instead of only that a file was written.
 nonisolated enum FluidServeSelfCheck {
-    enum Outcome: Equatable, Sendable {
+    enum Outcome: Equatable {
         case working(meetings: Int)
         case accessOff
         case failed(String)
@@ -38,9 +38,14 @@ nonisolated enum FluidServeSelfCheck {
 
     static func outcome(fromStatusJSON data: Data) -> Outcome {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = object["access"] as? Bool,
               let meetings = object["meetings"] as? Int
         else { return .failed("The meeting reader gave an answer FluidVoice could not read.") }
+        if object["access"] is NSNull {
+            return .failed(FluidServeMeetings.ReadError.accessUnavailable.localizedDescription)
+        }
+        guard let access = object["access"] as? Bool else {
+            return .failed("The meeting reader gave an answer FluidVoice could not read.")
+        }
         return access ? .working(meetings: meetings) : .accessOff
     }
 }

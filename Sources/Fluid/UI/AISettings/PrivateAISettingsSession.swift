@@ -24,7 +24,9 @@ struct PrivateAISettingsSession {
     private(set) var revision = UUID()
     private(set) var operationID: UUID?
 
-    var isBusy: Bool { self.operationID != nil }
+    var isBusy: Bool {
+        self.operationID != nil
+    }
 
     init(selectedModelID: String) {
         self.selectedModelID = selectedModelID
@@ -70,14 +72,14 @@ enum PrivateAISettingsUpdateTransaction {
     @MainActor
     static func run<Token>(
         update: () async throws -> Token,
-        verify: () async -> Bool,
+        verify: () async throws -> Bool,
         commit: (Token) async -> Void,
         rollback: (Token) async -> Void
     ) async throws -> Bool {
         let token = try await update()
         do {
             try Task.checkCancellation()
-            let verified = await verify()
+            let verified = try await verify()
             try Task.checkCancellation()
             if verified {
                 await commit(token)

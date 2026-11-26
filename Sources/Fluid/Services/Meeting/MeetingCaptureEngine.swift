@@ -97,9 +97,10 @@ actor MeetingCaptureEngine: MeetingCaptureControlling {
 
         let runtime: any MeetingCaptureRuntime
         switch configuration.mode {
-        case .onlineCall:
-            guard let application = configuration.application,
-                  let applicationWriter = writersByKind[.applicationAudio],
+        case .onlineCall, .systemAudio:
+            let application = configuration.application
+            guard configuration.mode == .systemAudio || application != nil else { throw MeetingCaptureError.applicationNotSelected }
+            guard let applicationWriter = writersByKind[.applicationAudio],
                   let microphoneWriter = writersByKind[.microphone]
             else { throw MeetingCaptureError.applicationNotSelected }
 
@@ -335,12 +336,13 @@ actor MeetingCaptureEngine: MeetingCaptureControlling {
         configuration: MeetingCaptureConfiguration
     ) -> [MeetingAudioTrack] {
         var tracks: [MeetingAudioTrack] = []
-        if let application = configuration.application {
+        if configuration.mode.capturesComputerAudio {
+            let application = configuration.application
             tracks.append(MeetingAudioTrack(
                 id: UUID(),
                 kind: .applicationAudio,
-                sourceIdentifier: application.bundleIdentifier,
-                sourceDisplayName: application.displayName,
+                sourceIdentifier: application?.bundleIdentifier ?? "system-audio",
+                sourceDisplayName: application?.displayName ?? "Computer audio",
                 format: nil,
                 timebase: session.timebase,
                 health: .waiting,
@@ -357,7 +359,7 @@ actor MeetingCaptureEngine: MeetingCaptureControlling {
             timebase: session.timebase,
             health: .waiting,
             chunks: [],
-            captureMethod: configuration.mode == .onlineCall ? .screenCaptureKit : .avCaptureSession
+            captureMethod: configuration.mode.capturesComputerAudio ? .screenCaptureKit : .avCaptureSession
         ))
         return tracks
     }
@@ -450,7 +452,7 @@ nonisolated protocol MeetingCaptureRuntime: AnyObject, Sendable {
 
 /// A candidate window for `.window`-scoped capture, in a shape independent of ScreenCaptureKit
 /// so the selection logic can be unit tested with plain values.
-nonisolated struct MeetingWindowCandidate: Sendable, Equatable {
+nonisolated struct MeetingWindowCandidate: Equatable {
     var windowID: UInt32
     var title: String?
     var frame: CGRect
@@ -493,7 +495,7 @@ nonisolated enum MeetingWindowSelector {
 /// Health of the CoreAudio listener set backing a route observation. A degraded observation means
 /// at least one required listener is missing, so the route can change without any further
 /// notification: the owner must fail closed instead of silently operating unlistened.
-nonisolated enum MeetingOutputRouteListenerHealth: Equatable, Sendable {
+nonisolated enum MeetingOutputRouteListenerHealth: Equatable {
     case healthy
     case degraded
 }
@@ -501,14 +503,14 @@ nonisolated enum MeetingOutputRouteListenerHealth: Equatable, Sendable {
 /// Identity of the SCK producer the runtime owns, plus the route revision that authorized it.
 /// Publication and AEC commit are both gated on this triple, so an in-flight operation can compare
 /// the value it captured against the live one without retaining `SCStream`.
-nonisolated struct MeetingCaptureStreamOwnership: Equatable, Sendable {
+nonisolated struct MeetingCaptureStreamOwnership: Equatable {
     var streamIdentity: UInt64
     var streamGeneration: UInt64
     var routeRevision: UInt64
 }
 
 /// Result of the final pending -> current publication decision.
-nonisolated enum MeetingCaptureStreamPublication: Equatable, Sendable {
+nonisolated enum MeetingCaptureStreamPublication: Equatable {
     /// Ownership matched: publish the candidate.
     case commit
     /// A newer revision or an ordered stop owns the outcome. Quietly abandon — never terminal.
@@ -609,7 +611,7 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
     /// Delays before each of the (up to 3) rebuild attempts following an unexpected stream stop.
     private static let rebuildDelays: [TimeInterval] = [0.5, 1.0, 2.0]
 
-    private let application: MeetingApplicationIdentity
+    private let application: MeetingApplicationIdentity?
     private let requestedMicrophone: MeetingMicrophoneIdentity
     /// Immutable for the runtime's lifetime: a rebuild never drops/adds the mic.
     private let includeMicrophone: Bool
@@ -644,7 +646,10 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
     private var rebuildOwner: UInt64?
     private var nextRebuildOwnerToken: UInt64 = 0
     /// Must be read with `stateLock` held.
-    private var rebuilding: Bool { self.rebuildOwner != nil }
+    private var rebuilding: Bool {
+        self.rebuildOwner != nil
+    }
+
     /// Unlike `rebuilding`, this records the actual ownership state of `stream`. It lets stop avoid
     /// re-stopping a producer that was deliberately retired even if replacement construction fails.
     private var currentStreamStopped = false
@@ -672,7 +677,7 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
     private init(
         stream: SCStream,
         scope: MeetingCaptureScope,
-        application: MeetingApplicationIdentity,
+        application: MeetingApplicationIdentity?,
         requestedMicrophone: MeetingMicrophoneIdentity,
         activeMicrophone: MeetingMicrophoneIdentity,
         includeMicrophone: Bool,
@@ -705,7 +710,7 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
     }
 
     static func make(
-        application: MeetingApplicationIdentity,
+        application: MeetingApplicationIdentity?,
         microphone: MeetingMicrophoneIdentity,
         includeMicrophone: Bool = true,
         comparisonProbe: MeetingAudioComparisonProbe? = nil,
@@ -757,7 +762,7 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
     /// Resolves the shareable content, filter, configuration and stream. Re-invoked both for the
     /// initial `make` and for every rebuild attempt after an unexpected stream stop.
     private static func buildStream(
-        application: MeetingApplicationIdentity,
+        application: MeetingApplicationIdentity?,
         microphone: MeetingMicrophoneIdentity,
         includeMicrophone: Bool,
         allowApplicationRelaunch: Bool = false
@@ -768,36 +773,52 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
         } catch {
             throw MeetingCaptureError.screenCapturePermissionDenied(error.localizedDescription)
         }
-        let candidates = content.applications.map {
-            MeetingApplicationIdentity(bundleIdentifier: $0.bundleIdentifier, processID: $0.processID, displayName: $0.applicationName)
-        }
-        var requested = application
-        // Only an already-running recording may recover after the app relaunches.
-        // Initial capture must use exactly the process the user confirmed.
-        if allowApplicationRelaunch, !candidates.contains(where: { $0.processID == application.processID && $0.bundleIdentifier == application.bundleIdentifier }) {
-            requested.processID = nil
-        }
-        let resolved = try MeetingRecordingSourceResolver.resolve(
-            mode: .onlineCall, source: MeetingRecordingSource(application: requested), target: nil, applications: candidates
-        )
-        guard let runningApplication = content.applications.first(where: { $0.processID == resolved?.processID }) else {
-            throw MeetingCaptureError.applicationUnavailable(application.displayName)
-        }
-
         let filter: SCContentFilter
         let scope: MeetingCaptureScope
-        if let window = Self.selectWindow(for: runningApplication, in: content, preferredWindowID: application.windowID) {
-            filter = SCContentFilter(desktopIndependentWindow: window)
-            scope = .window
+        if let application, application.capturesAllInstances == true {
+            let matching = content.applications.filter { $0.bundleIdentifier == application.bundleIdentifier && $0.processID > 0 }
+            guard !matching.isEmpty else { throw MeetingCaptureError.applicationUnavailable(application.displayName) }
+            guard let display = content.displays.first else { throw MeetingCaptureError.noCaptureDisplay }
+            filter = SCContentFilter(display: display, including: matching, exceptingWindows: [])
+            scope = .display
+        } else if let application {
+            let candidates = content.applications.map {
+                MeetingApplicationIdentity(bundleIdentifier: $0.bundleIdentifier, processID: $0.processID, displayName: $0.applicationName)
+            }
+            var requested = application
+            // Only recovery may follow a relaunched app, and the resolver still requires one
+            // unambiguous replacement. Initial capture must keep the confirmed process.
+            if allowApplicationRelaunch, !candidates.contains(where: {
+                $0.processID == application.processID && $0.bundleIdentifier == application.bundleIdentifier
+            }) {
+                requested.processID = nil
+                requested.windowID = nil
+                requested.displayID = nil
+            }
+            let source = MeetingRecordingSource(application: requested)
+            let resolved = try allowApplicationRelaunch
+                ? MeetingRecordingSourceResolver.resolveRecovery(source: source, applications: candidates)
+                : MeetingRecordingSourceResolver.resolve(mode: .onlineCall, source: source, target: nil, applications: candidates)
+            guard let runningApplication = content.applications.first(where: { $0.processID == resolved?.processID }) else {
+                throw MeetingCaptureError.applicationUnavailable(application.displayName)
+            }
+
+            if let window = Self.selectWindow(for: runningApplication, in: content, preferredWindowID: requested.windowID) {
+                filter = SCContentFilter(desktopIndependentWindow: window)
+                scope = .window
+            } else {
+                let display = requested.displayID.flatMap { displayID in
+                    content.displays.first(where: { $0.displayID == displayID })
+                } ?? content.displays.first
+                guard let display else { throw MeetingCaptureError.noCaptureDisplay }
+                filter = SCContentFilter(display: display, including: [runningApplication], exceptingWindows: [])
+                scope = .display
+            }
         } else {
-            let display = application.displayID.flatMap { displayID in
-                content.displays.first(where: { $0.displayID == displayID })
-            } ?? content.displays.first
-            guard let display else { throw MeetingCaptureError.noCaptureDisplay }
-            filter = SCContentFilter(display: display, including: [runningApplication], exceptingWindows: [])
+            guard let display = content.displays.first else { throw MeetingCaptureError.noCaptureDisplay }
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             scope = .display
         }
-
         let configuration = SCStreamConfiguration()
         configuration.width = 2
         configuration.height = 2
@@ -1063,13 +1084,19 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
             case .active:
                 pipeline?.consumeCapture(sampleBuffer, stream: streamToken)
             case .armed:
+                // The format handshake is raw warm-up too. Persist its provenance before
+                // validation can activate or invalidate the pipeline; never drop the first PCM.
+                if let pipeline {
+                    pipeline.commitValidationCapture(sampleBuffer)
+                } else {
+                    self.emitDirectRawMicrophone(sampleBuffer, producerEpoch: streamToken.generation)
+                }
                 self.validateArmedCallback(
                     sampleBuffer,
                     kind: .capture,
                     stream: stream,
                     token: streamToken
                 )
-                self.emitDirectRawMicrophone(sampleBuffer, producerEpoch: streamToken.generation)
             case .raw, .constructing, .ready:
                 self.emitDirectRawMicrophone(sampleBuffer, producerEpoch: streamToken.generation)
             }
@@ -1496,11 +1523,13 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
             self.eventHandler(.interrupted(
                 kind: .microphoneChanged,
                 trackID: self.microphoneWriter.trackID,
-                detail: inputDetail ?? (disposition == .physicallyClosed
-                    ? "Microphone transcript admission resumed on a positively identified closed output route."
-                    : disposition == .supportedSpeaker
-                    ? "Speaker-route AEC restarted unprotected and is awaiting clock attestation and warm-up."
-                    : "Microphone transcript admission remains disabled because the output route is ambiguous.")
+                detail: inputDetail ?? (
+                    disposition == .physicallyClosed
+                        ? "Microphone transcript admission resumed on a positively identified closed output route."
+                        : disposition == .supportedSpeaker
+                        ? "Speaker-route AEC restarted unprotected and is awaiting clock attestation and warm-up."
+                        : "Microphone transcript admission remains disabled because the output route is ambiguous."
+                )
             ))
         }
     }
@@ -1772,16 +1801,20 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
             return owner
         }
         guard let rebuildOwner else { return }
-        self.invalidateAECForStreamRebuild()
+        self.invalidateAECForStreamRebuild(error: error)
         self.eventHandler(.interrupted(kind: .sourceLost, trackID: nil, detail: error.localizedDescription))
         self.runRebuildLoop(triggeringError: error, stoppedStream: stoppedStream, owner: rebuildOwner)
     }
 
-    private func invalidateAECForStreamRebuild() {
-        let shouldInvalidate = self.stateLock.withLock {
-            self.routeDisposition == .supportedSpeaker || self.aecPipeline != nil
+    private func invalidateAECForStreamRebuild(error: Error) {
+        let routeRevision = self.stateLock.withLock { () -> UInt64? in
+            guard self.routeDisposition == .supportedSpeaker || self.aecPipeline != nil else { return nil }
+            return self.outputRouteRevision
         }
-        guard shouldInvalidate else { return }
+        guard let routeRevision else { return }
+        let streamError = error as NSError
+        let sourceDisappeared = streamError.domain == SCStreamErrorDomain
+            && streamError.code == SCStreamError.noCaptureSource.rawValue
         let boundary = self.microphoneTranscriptGate.invalidate()
         self.stateLock.withLock {
             self.aecActivation.invalidate()
@@ -1792,7 +1825,16 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
                 return self.aecPipeline
             }
             if let detached {
-                detached.invalidate(reason: .streamChanged, boundary: boundary)
+                let routeUnchanged = self.stateLock.withLock {
+                    self.outputRouteRevision == routeRevision
+                        && self.routeDisposition == .supportedSpeaker
+                        && !self.routeListenerDegraded
+                }
+                detached.retireStoppedStream(
+                    sourceDisappeared: sourceDisappeared,
+                    routeUnchanged: routeUnchanged,
+                    boundary: boundary
+                )
                 self.retainRetiredCommitterIfPending(detached.committer)
             } else {
                 self.microphoneWriter.enqueueMetadata(
@@ -1944,11 +1986,19 @@ private final nonisolated class ScreenCaptureMeetingRuntime: NSObject, MeetingCa
             return true
         }
         guard shouldReport else { return }
-        self.eventHandler(.interrupted(
-            kind: .captureStoppedUnexpectedly,
-            trackID: nil,
-            detail: triggeringError.localizedDescription
-        ))
+        self.eventHandler(.rebuildExhausted(triggeringError))
+    }
+}
+
+nonisolated extension MeetingCaptureEvent {
+    /// The event to report once stream recovery gives up. Recovery that can no longer find the meeting
+    /// app to capture (for example after the host ends a Zoom call, or Zoom quits) is the end of the
+    /// meeting. Any other failure is an unexpected stop.
+    static func rebuildExhausted(_ error: Error) -> MeetingCaptureEvent {
+        if case MeetingCaptureError.applicationUnavailable = error {
+            return .sourceApplicationEnded(detail: error.localizedDescription)
+        }
+        return .interrupted(kind: .captureStoppedUnexpectedly, trackID: nil, detail: error.localizedDescription)
     }
 }
 
@@ -1964,7 +2014,9 @@ private final nonisolated class InRoomMicrophoneCaptureRuntime: NSObject, Meetin
     AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable
 {
     private let microphonePCMNormalizer = MeetingMicrophonePCMNormalizer()
-    var captureScope: MeetingCaptureScope? { nil }
+    var captureScope: MeetingCaptureScope? {
+        nil
+    }
 
     private let session = AVCaptureSession()
     private let output = AVCaptureAudioDataOutput()
@@ -2513,7 +2565,7 @@ final nonisolated class MeetingEraAcceptanceFence: @unchecked Sendable {
     }
 }
 
-private nonisolated enum MeetingOneShotResult: Sendable {
+private nonisolated enum MeetingOneShotResult {
     case success
     case failure(String)
 }
@@ -2552,6 +2604,8 @@ nonisolated enum MeetingCaptureError: LocalizedError {
     case wrongActiveSession
     case applicationNotSelected
     case applicationUnavailable(String)
+    /// Recovery found several running copies of the app and cannot tell which one holds the call.
+    case applicationAmbiguous(String)
     case noCaptureDisplay
     case microphoneUnavailable
     case microphonePermissionDenied
@@ -2574,6 +2628,8 @@ nonisolated enum MeetingCaptureError: LocalizedError {
             return "Choose the application that contains the online meeting."
         case let .applicationUnavailable(name):
             return "\(name) is no longer available to record."
+        case let .applicationAmbiguous(name):
+            return "More than one \(name) is running, so recording could not tell which one has the call."
         case .noCaptureDisplay:
             return "No display is available for meeting-audio capture."
         case .microphoneUnavailable:
@@ -2608,13 +2664,16 @@ nonisolated enum MeetingCaptureSourceCatalog {
     static func resolveApplication(
         from applications: [MeetingApplicationIdentity],
         preferredBundleIdentifier: String?,
+        preferredProcessID: Int32? = nil,
         requirePreferredApplication: Bool
     ) throws -> MeetingApplicationIdentity {
         if requirePreferredApplication {
             guard let preferredBundleIdentifier else {
                 throw MeetingCaptureError.applicationNotSelected
             }
-            guard let match = applications.first(where: { $0.bundleIdentifier == preferredBundleIdentifier }) else {
+            guard let match = applications.first(where: {
+                $0.bundleIdentifier == preferredBundleIdentifier && (preferredProcessID == nil || $0.processID == preferredProcessID)
+            }) else {
                 throw MeetingCaptureError.applicationUnavailable(preferredBundleIdentifier)
             }
             return match
@@ -2692,12 +2751,12 @@ nonisolated enum MeetingCaptureSourceCatalog {
     }
 }
 
-nonisolated struct MeetingMicrophoneCatalogSnapshot: Sendable, Equatable {
+nonisolated struct MeetingMicrophoneCatalogSnapshot: Equatable {
     var identities: [MeetingMicrophoneIdentity]
     var defaultCoreAudioUID: String?
 }
 
-nonisolated struct MeetingAVCaptureDeviceDescriptor: Equatable, Sendable {
+nonisolated struct MeetingAVCaptureDeviceDescriptor: Equatable {
     var uniqueID: String
     var displayName: String
 }
@@ -2772,7 +2831,7 @@ private extension CGRect {
     }
 }
 
-nonisolated enum MeetingCapturePathDecision: Sendable, Equatable {
+nonisolated enum MeetingCapturePathDecision: Equatable {
     case voiceProcessing
     case screenCaptureKit(reason: String)
 }
@@ -2815,7 +2874,9 @@ nonisolated enum MeetingCaptureTransitionPolicy {
 }
 
 nonisolated enum MeetingVoiceProcessingUpgradeDwell {
-    static var seconds: Double { MeetingCaptureTransitionPolicy.recoveryDwellSeconds }
+    static var seconds: Double {
+        MeetingCaptureTransitionPolicy.recoveryDwellSeconds
+    }
 
     // Keep the existing capture/processing contract explicit during integration.
     // swiftlint:disable:next function_parameter_count
@@ -3009,7 +3070,7 @@ nonisolated enum MeetingAVCaptureRebindDecision {
 }
 
 /// Output-route facts the decision needs, as a plain value so `decide` is unit-testable headless.
-nonisolated struct MeetingOutputRouteSnapshot: Sendable, Equatable {
+nonisolated struct MeetingOutputRouteSnapshot: Equatable {
     var deviceExists: Bool
     var isBluetooth: Bool
     var isBuiltIn: Bool
@@ -3086,7 +3147,7 @@ final nonisolated class MeetingMicrophoneTranscriptGate: @unchecked Sendable {
 
     /// Closes admission first and returns the last observed sample PTS. Using that PTS as the next
     /// era boundary deliberately excludes the final pre-notification buffer as a safety margin.
-    struct InvalidationBoundary: Equatable, Sendable {
+    struct InvalidationBoundary: Equatable {
         let unsafeStartSeconds: Double
         let observedSeconds: Double
     }
@@ -3152,7 +3213,7 @@ nonisolated enum MeetingCapturePathDecider {
         forcePairedScreenCaptureKit: Bool = false,
         preferDirectAEC3: Bool = false
     ) -> MeetingCapturePathDecision {
-        guard mode == .onlineCall else {
+        guard mode.capturesComputerAudio else {
             return .screenCaptureKit(reason: "Voice-processing capture only applies to online-call recordings.")
         }
         guard let coreAudioUID = microphone.coreAudioUID, !coreAudioUID.isEmpty else {
@@ -3298,7 +3359,9 @@ final nonisolated class MeetingVoiceProcessingCommitGate: @unchecked Sendable {
         self.ringBytes = 0
     }
 
-    var isCommitted: Bool { self.lock.withLock { self.state == .committed } }
+    var isCommitted: Bool {
+        self.lock.withLock { self.state == .committed }
+    }
 }
 
 /// Emitted-only progress: dropped/failed buffers deliver no audio, so a dropped run trips this too.
@@ -3950,7 +4013,7 @@ nonisolated enum MeetingVoiceProcessingDriftSnapshot {
 
 /// Device election for a capture-side swap. Role is retained in the schema for old manifests but
 /// never inferred or used by new capture decisions.
-nonisolated struct MeetingCaptureDeviceElection: Sendable, Equatable {
+nonisolated struct MeetingCaptureDeviceElection: Equatable {
     var identity: MeetingMicrophoneIdentity
     var role: MeetingMicrophoneRole
 
@@ -4045,7 +4108,7 @@ nonisolated struct MeetingCaptureDeviceElection: Sendable, Equatable {
     }
 }
 
-nonisolated enum MeetingCaptureDeviceTransition: Sendable, Equatable {
+nonisolated enum MeetingCaptureDeviceTransition: Equatable {
     case unchanged(MeetingCaptureDeviceElection)
     case changed(MeetingCaptureDeviceElection)
     case unavailable
@@ -4074,7 +4137,7 @@ private final nonisolated class VoiceProcessingMeetingRuntime: MeetingCaptureRun
         case failed(String)
     }
 
-    private let application: MeetingApplicationIdentity
+    private let application: MeetingApplicationIdentity?
     private let originalMicrophone: MeetingMicrophoneIdentity
     private let applicationWriter: MeetingAudioChunkWriter
     private let microphoneWriter: MeetingAudioChunkWriter
@@ -4117,7 +4180,7 @@ private final nonisolated class VoiceProcessingMeetingRuntime: MeetingCaptureRun
     }
 
     private init(
-        application: MeetingApplicationIdentity,
+        application: MeetingApplicationIdentity?,
         microphone: MeetingMicrophoneIdentity,
         applicationWriter: MeetingAudioChunkWriter,
         microphoneWriter: MeetingAudioChunkWriter,
@@ -4139,7 +4202,7 @@ private final nonisolated class VoiceProcessingMeetingRuntime: MeetingCaptureRun
     #endif
 
     static func make(
-        application: MeetingApplicationIdentity,
+        application: MeetingApplicationIdentity?,
         microphone: MeetingMicrophoneIdentity,
         applicationWriter: MeetingAudioChunkWriter,
         microphoneWriter: MeetingAudioChunkWriter,
@@ -5328,8 +5391,8 @@ private final nonisolated class VoiceProcessingMeetingRuntime: MeetingCaptureRun
     }
 
     #if false
-    // Retained only as source history during the transition rollout. Compiled out so
-    // an AVCapture fallback cannot create a second VPIO owner in this meeting.
+    /// Retained only as source history during the transition rollout. Compiled out so
+    /// an AVCapture fallback cannot create a second VPIO owner in this meeting.
     /// `dwellArming` reserves the slot in the SAME critical section as the `dwellTask == nil` check.
     private func armUpgradeDwellIfViable() {
         guard MeetingCaptureTransitionPolicy.allowsWithinSessionVoiceProcessingUpgrade else { return }

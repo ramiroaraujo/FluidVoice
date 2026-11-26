@@ -5,6 +5,7 @@ struct AutomaticDictionaryCorrectionCandidate: Equatable, Identifiable {
     let heardText: String
     let correctedText: String
     var sourceUTF16Range: NSRange?
+    var trainingExample: DictionaryCorrectionExample?
     var audioEvidence: DictionaryLearningAudioEvidence?
     var negativeCorrection: DictionaryNegativeCorrection?
 
@@ -75,8 +76,10 @@ enum AutomaticDictionaryCorrectionDetector {
 
         if change.oldRange.length == 0 {
             return change.oldRange.location >= insertedRange.location &&
-                (change.oldRange.location < insertedEnd ||
-                    (allowsInsertionAtEnd && change.oldRange.location == insertedEnd))
+                (
+                    change.oldRange.location < insertedEnd ||
+                        (allowsInsertionAtEnd && change.oldRange.location == insertedEnd)
+                )
         }
 
         return change.oldRange.location >= insertedRange.location &&

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Versioned, length-framed key/value encoding so arbitrary string fields cannot collide on
@@ -20,8 +21,8 @@ nonisolated enum MeetingConfigFingerprintEncoding {
 /// Immutable value snapshot of meeting post-processing ASR configuration. The pipeline builds it
 /// once per attempt and the meeting preparation owner constructs a fixed provider from it, so an
 /// active run never follows later dictation-setting changes.
-nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
-    static let defaultASRModel = "parakeet-tdt-v2"
+nonisolated struct MeetingFinalProcessingConfiguration: Equatable {
+    static let defaultASRModel = "fluid-parakeet-pro"
     static let defaultLanguageCode = "en"
     /// One shared immutable version keeps frozen requests and saved attempts consistent.
     static let defaultPipelineVersion = MeetingProcessingPipeline.pipelineVersion
@@ -31,6 +32,8 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
     let vocabularyBoostingEnabled: Bool
     let pronunciationMatchingEnabled: Bool
     let customDictionaryRewritingEnabled: Bool
+    let customDictionaryEntries: [SettingsStore.CustomDictionaryEntry]
+    private let dictionaryFingerprint: String
     let experimentalUnifiedFinalEnabled: Bool
     let diarizationFingerprint: String
     let pipelineVersion: Int
@@ -42,6 +45,7 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
         vocabularyBoostingEnabled: Bool = false,
         pronunciationMatchingEnabled: Bool = false,
         customDictionaryRewritingEnabled: Bool = false,
+        customDictionaryEntries: [SettingsStore.CustomDictionaryEntry] = [],
         experimentalUnifiedFinalEnabled: Bool = false,
         diarizationFingerprint: String = MeetingProcessingCheckpoint.currentDiarizationFingerprint,
         pipelineVersion: Int = Self.defaultPipelineVersion
@@ -51,6 +55,14 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
         self.vocabularyBoostingEnabled = vocabularyBoostingEnabled
         self.pronunciationMatchingEnabled = pronunciationMatchingEnabled
         self.customDictionaryRewritingEnabled = customDictionaryRewritingEnabled
+        self.customDictionaryEntries = customDictionaryRewritingEnabled ? customDictionaryEntries : []
+        // Resume identity must change with rule content without persisting private dictionary text.
+        let dictionaryIdentity = MeetingConfigFingerprintEncoding.encode(self.customDictionaryEntries.flatMap { entry in
+            [("id", entry.id.uuidString), ("replacement", entry.replacement)]
+                + entry.triggers.map { ("trigger", $0) }
+                + (entry.caseSensitive ? [("caseSensitive", "true")] : [])
+        })
+        self.dictionaryFingerprint = SHA256.hash(data: Data(dictionaryIdentity.utf8)).map { String(format: "%02x", $0) }.joined()
         self.experimentalUnifiedFinalEnabled = experimentalUnifiedFinalEnabled
         self.diarizationFingerprint = diarizationFingerprint
         self.pipelineVersion = pipelineVersion
@@ -65,6 +77,7 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
             ("vocabBoost", String(self.vocabularyBoostingEnabled)),
             ("pronunciationMatch", String(self.pronunciationMatchingEnabled)),
             ("dictionaryRewrite", String(self.customDictionaryRewritingEnabled)),
+            ("dictionaryRules", self.dictionaryFingerprint),
             ("unifiedFinal", String(self.experimentalUnifiedFinalEnabled)),
             ("diarizer", self.diarizationFingerprint),
             ("pipeline", String(self.pipelineVersion)),
@@ -72,8 +85,8 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
     }
 }
 
-/// Languages a finished meeting can be transcribed in again. Final meeting transcription uses the
-/// multilingual Parakeet model, so the choice is that model's language set, not the dictation model
+/// Languages a finished meeting can be transcribed in again. Final meeting transcription uses
+/// Pro or its multilingual Parakeet fallback, so the choice is their language set, not the dictation model
 /// currently selected for live typing.
 enum MeetingRetranscriptionLanguage {
     static func canonicalCode(_ raw: String) -> String? {
@@ -90,10 +103,11 @@ enum MeetingRetranscriptionLanguage {
         self.choices.first { $0.id == languageCode }?.displayName ?? languageCode
     }
 
-    /// A same-language run replaces nothing and, if it fails, hides the transcript that is already there.
-    static func canRetranscribe(selection: String, currentLanguageCode: String) -> Bool {
+    /// Explicit redo can refresh saved replacements in the same language. Recovery suggestions
+    /// still distinguish a failed language change from an ordinary retry.
+    static func canRetranscribe(selection: String, currentLanguageCode: String, allowsSameLanguage: Bool = false) -> Bool {
         guard let code = canonicalCode(selection) else { return false }
-        return code != currentLanguageCode
+        return allowsSameLanguage || code != currentLanguageCode
     }
 
     /// The language an empty meeting should try again. Use the latest attempt that recorded a
@@ -109,7 +123,7 @@ enum MeetingRetranscriptionLanguage {
 }
 
 /// Inert value snapshot of live-caption ASR configuration. Live captions do no diarization.
-nonisolated struct MeetingLiveCaptionsConfiguration: Equatable, Sendable {
+nonisolated struct MeetingLiveCaptionsConfiguration: Equatable {
     static let defaultModelRepositoryID = "FluidInference/parakeet-realtime-eou-120m-coreml"
     static let defaultModelVariant = "160ms"
     /// Branch selected by the current loader; source pins no resolved HF commit, so this is the

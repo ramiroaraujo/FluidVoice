@@ -4,32 +4,32 @@ import IOKit
 
 /// A hardware heuristic, not a latency guarantee. Does not alter settings or load models.
 enum PrivateAIHardwareRecommendation {
-    struct Hardware: Equatable, Sendable {
+    struct Hardware: Equatable {
         let chip: String
         let memoryBytes: UInt64
         let gpuCoreCount: Int?
     }
 
-    enum Model: String, Sendable {
+    enum Model: String {
         case pico = "fluid-1-pico-96k-dflash"
         case splash = "fluid-1.1-splash"
     }
 
-    enum Reason: String, Sendable {
+    enum Reason: String {
         case sufficientHardware
         case insufficientMemory
         case entryLevelChip
         case unknownHardware
     }
 
-    struct Recommendation: Equatable, Sendable {
+    struct Recommendation: Equatable {
         let model: Model
         let reason: Reason
         /// Published peak bandwidth; conservative lower variant when GPU identity is unavailable.
         let bandwidthGBps: Double?
     }
 
-    // A single bounded snapshot. Even the first caller on MainActor performs hardware IO off-main.
+    /// A single bounded snapshot. Even the first caller on MainActor performs hardware IO off-main.
     private static let hardwareTask = Task.detached(priority: .utility) {
         Hardware(
             chip: Self.readChip() ?? "unknown",
@@ -106,5 +106,14 @@ enum PrivateAIHardwareRecommendation {
               let number = property.takeRetainedValue() as? NSNumber else { return nil }
         let count = number.intValue
         return (1...256).contains(count) ? count : nil
+    }
+}
+
+/// Reuse the existing bounded, off-main hardware snapshot for provider recommendations.
+typealias PrivateAIMacHardware = PrivateAIHardwareRecommendation.Hardware
+
+extension PrivateAIHardwareRecommendation.Hardware {
+    static func current() async -> Self {
+        await PrivateAIHardwareRecommendation.currentHardware()
     }
 }

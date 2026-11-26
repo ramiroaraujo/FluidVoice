@@ -580,19 +580,37 @@ final class OverlayCaptionPresentationTests: XCTestCase {
     }
 
     func testWindowAndControlsStayStillThroughWrappingAndCorrections() async throws {
+        let hostASR = AppServices.shared.asr
+        let startupDeadline = ProcessInfo.processInfo.systemUptime + 10
+        while !hostASR.initialMenuBarStateDeliveredForTests, ProcessInfo.processInfo.systemUptime < startupDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard hostASR.initialMenuBarStateDeliveredForTests else {
+            XCTFail("The test host must finish delivering its initial ASR state")
+            return
+        }
         let settings = SettingsStore.shared
         let state = NotchContentState.shared
         let previousSize = settings.overlaySize
         let previousPreview = settings.enableStreamingPreview
         let previousText = state.transcriptionText
+        let previousProcessing = state.isProcessing
+        let previousAIFailure = state.isAIProcessingFailureVisible
+        let previousDeliveryFailure = state.isTextDeliveryFailureVisible
         let controller = BottomOverlayWindowController.shared
-        defer {
-            controller.hideImmediately()
+        self.addTeardownBlock { @MainActor in
+            try await Self.hideBottomOverlayAndDrainCleanup()
             settings.overlaySize = previousSize
             settings.enableStreamingPreview = previousPreview
             state.updateTranscription(previousText)
+            state.isProcessing = previousProcessing
+            state.isAIProcessingFailureVisible = previousAIFailure
+            state.isTextDeliveryFailureVisible = previousDeliveryFailure
         }
         settings.enableStreamingPreview = true
+        state.isProcessing = false
+        state.isAIProcessingFailureVisible = false
+        state.isTextDeliveryFailureVisible = false
         func caption(in view: NSView) -> OverlayCaptionNSView? {
             if let caption = view as? OverlayCaptionNSView { return caption }
             return view.subviews.lazy.compactMap { caption(in: $0) }.first
@@ -614,14 +632,158 @@ final class OverlayCaptionPresentationTests: XCTestCase {
                 guard !text.isEmpty else { continue }
                 let host = try XCTUnwrap(controller.contentViewForTests)
                 host.layoutSubtreeIfNeeded()
-                let view = try XCTUnwrap(caption(in: host))
+                let view = try XCTUnwrap(caption(in: host), "Expected a caption for \(size) after updating its text")
                 let rect = view.convert(view.bounds, to: host)
-                let inset = layout.hPadding + (host.bounds.width - layout.containerWidth) / 2
+                // Hover can expand Small without resizing its fixed window. Measure
+                // padding from the visible surface, not its collapsed-only width.
+                let surfaceWidth = controller.visibleSurfaceWidthForTests
+                XCTAssertGreaterThanOrEqual(surfaceWidth, layout.containerWidth)
+                XCTAssertLessThanOrEqual(surfaceWidth, host.bounds.width)
+                let inset = layout.hPadding + (host.bounds.width - surfaceWidth) / 2
                 XCTAssertEqual(rect.minX, inset, accuracy: 0.5, "\(size): captions must retain the leading inset")
                 XCTAssertEqual(host.bounds.width - rect.maxX, inset, accuracy: 0.5, "\(size): captions must retain the trailing inset")
             }
-            controller.hideImmediately()
+            try await Self.hideBottomOverlayAndDrainCleanup()
         }
+    }
+
+    func testSendCountdownDrawsProgressAndKeepsThePlaneAfterSending() async throws {
+        func indicator(_ state: SpokenSendIndicatorState, start: Date = .distantPast) -> some View {
+            SpokenSendIndicatorView(state: state, color: .white, size: 40, countdownDuration: 1, countdownStartedAt: start)
+                .frame(width: 80, height: 80)
+                .background(Color.black)
+        }
+        let host = NSHostingView(rootView: AnyView(indicator(.detected)))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 80, height: 80), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        func capture(_ name: String) throws -> (ringPixels: Int, png: Data) {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide) / 80
+            var ringPixels = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    let radius = hypot(CGFloat(x) / scale - 40, CGFloat(y) / scale - 40)
+                    guard radius > 17, radius < 23,
+                          let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)
+                    else { continue }
+                    if color.redComponent > 0.6 { ringPixels += 1 }
+                }
+            }
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            self.add(attachment)
+            return (ringPixels, png)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        let plane = try capture("Send-plane")
+        host.rootView = AnyView(indicator(.countingDown, start: Date().addingTimeInterval(0.4)))
+        try await Task.sleep(for: .milliseconds(200))
+        let early = try capture("Send-countdown-empty")
+        try await Task.sleep(for: .milliseconds(650))
+        let middle = try capture("Send-countdown-half")
+        try await Task.sleep(for: .milliseconds(650))
+        let full = try capture("Send-countdown-full")
+        XCTAssertGreaterThan(middle.ringPixels, early.ringPixels + 20, "The ring must visibly fill, not appear complete on its first frame")
+        XCTAssertGreaterThan(full.ringPixels, middle.ringPixels + 20)
+        host.rootView = AnyView(indicator(.sent))
+        try await Task.sleep(for: .milliseconds(100))
+        let sent = try capture("Send-plane-sent")
+        XCTAssertEqual(sent.png, plane.png, "Successful sending must retain the plane instead of flashing a filled circle")
+    }
+
+    func testAutoSendIndicatorFitsEveryBottomOverlayWithoutResizing() async throws {
+        let hostASR = AppServices.shared.asr
+        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        while !hostASR.initialMenuBarStateDeliveredForTests, ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(hostASR.initialMenuBarStateDeliveredForTests)
+        let settings = SettingsStore.shared
+        let state = NotchContentState.shared
+        let sizeBefore = settings.overlaySize
+        let armedBefore = state.isAutoSendArmed
+        let modeBefore = state.mode
+        let processingBefore = state.isProcessing
+        let spokenBefore = state.spokenSendIndicatorState
+        let iconBefore = state.targetAppIcon
+        self.addTeardownBlock { @MainActor in
+            try await Self.hideBottomOverlayAndDrainCleanup()
+            settings.overlaySize = sizeBefore
+            state.isAutoSendArmed = armedBefore
+            state.mode = modeBefore
+            state.isProcessing = processingBefore
+            state.setSpokenSendIndicatorState(spokenBefore)
+            state.targetAppIcon = iconBefore
+        }
+        let controller = BottomOverlayWindowController.shared
+        for size: SettingsStore.OverlaySize in [.pill, .small, .medium, .large] {
+            settings.overlaySize = size
+            state.isAutoSendArmed = false
+            controller.show(audioPublisher: Just(CGFloat(0.35)).eraseToAnyPublisher(), mode: .dictation)
+            try await Task.sleep(for: .milliseconds(350))
+            let initialSize = try XCTUnwrap(controller.windowSizeForTests)
+            state.isAutoSendArmed = true
+            state.targetAppIcon = NSImage(named: NSImage.applicationIconName)
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertEqual(state.sendIndicatorState(spokenSendEnabled: false), .detected)
+            XCTAssertEqual(controller.windowSizeForTests, initialSize)
+            let host = try XCTUnwrap(controller.contentViewForTests)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let attachment = try XCTAttachment(data: XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+            attachment.name = "Auto-send-\(size)"
+            attachment.lifetime = .keepAlways
+            self.add(attachment)
+            state.setProcessing(true)
+            XCTAssertEqual(state.sendIndicatorState(spokenSendEnabled: false), .detected)
+            try await Self.hideBottomOverlayAndDrainCleanup()
+            XCTAssertFalse(state.isAutoSendArmed, "Dismissed overlays must not show auto-send on the next ordinary recording")
+        }
+    }
+
+    private static func hideBottomOverlayAndDrainCleanup() async throws {
+        let state = NotchContentState.shared
+        guard state.isBottomOverlayPresented else { return }
+        BottomOverlayWindowController.shared.hideImmediately()
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while state.isBottomOverlayPresented, ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(state.isBottomOverlayPresented, "Finish deferred hide cleanup before restoring shared state")
+    }
+
+    func testStartupReadinessBelongsToTheConfiguredASR() async {
+        let configured = ASRService()
+        let unrelated = ASRService()
+        let manager = MenuBarManager()
+        manager.configure(asrService: configured)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        withExtendedLifetime(manager) {
+            XCTAssertTrue(configured.initialMenuBarStateDeliveredForTests)
+            XCTAssertFalse(unrelated.initialMenuBarStateDeliveredForTests)
+        }
+    }
+
+    func testRestoredProcessingStateSurvivesDeferredHideCleanup() async throws {
+        let state = NotchContentState.shared
+        let previousProcessing = state.isProcessing
+        defer { state.isProcessing = previousProcessing }
+        BottomOverlayWindowController.shared.show(audioPublisher: Just(CGFloat.zero).eraseToAnyPublisher(), mode: .dictation)
+        state.isProcessing = true
+        try await Self.hideBottomOverlayAndDrainCleanup()
+        state.isProcessing = true
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(state.isProcessing, "Deferred hide cleanup must not overwrite the restored flag")
     }
 
     func testHiddenBottomOverlayStopsPendingWordsWithoutClearingTheTranscript() async throws {

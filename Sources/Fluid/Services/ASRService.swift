@@ -200,7 +200,7 @@ struct StreamingTranscriptionWorkState {
 /// Cancelling a pending start releases its waiter without completing the active handoff.
 @MainActor
 final class RecordingBufferHandoffGate {
-    // Explicitly nonisolated: on macOS 15.4+ the synthesized main-actor deinit can abort until the OS runtime has the fix (swiftlang/swift#88036).
+    /// Explicitly nonisolated: on macOS 15.4+ the synthesized main-actor deinit can abort until the OS runtime has the fix (swiftlang/swift#88036).
     nonisolated deinit {}
 
     struct Token: Equatable {
@@ -211,8 +211,13 @@ final class RecordingBufferHandoffGate {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private(set) var isRecovering = false
 
-    var isActive: Bool { self.activeToken != nil }
-    var pendingWaiterCount: Int { self.waiters.count }
+    var isActive: Bool {
+        self.activeToken != nil
+    }
+
+    var pendingWaiterCount: Int {
+        self.waiters.count
+    }
 
     func begin() -> Token? {
         guard self.activeToken == nil else { return nil }
@@ -253,16 +258,24 @@ final class RecordingBufferHandoffGate {
 /// stop cancels only the delay; an active provider operation is allowed to settle.
 @MainActor
 final class StreamingTaskLifecycle {
-    // Explicitly nonisolated: on macOS 15.4+ the synthesized main-actor deinit can abort until the OS runtime has the fix (swiftlang/swift#88036).
+    /// Explicitly nonisolated: on macOS 15.4+ the synthesized main-actor deinit can abort until the OS runtime has the fix (swiftlang/swift#88036).
     nonisolated deinit {}
 
     private var scheduler: (id: UUID, task: Task<Void, Never>)?
     private var active: (sessionID: Int, operationID: UUID, task: Task<Void, Never>)?
     private var drainWaiters: [UUID: (operationID: UUID, continuation: CheckedContinuation<Bool, Never>, timer: Task<Void, Never>)] = [:]
 
-    var hasScheduledIdleWork: Bool { self.scheduler != nil }
-    var hasActiveWork: Bool { self.active != nil }
-    var pendingDrainCount: Int { self.drainWaiters.count }
+    var hasScheduledIdleWork: Bool {
+        self.scheduler != nil
+    }
+
+    var hasActiveWork: Bool {
+        self.active != nil
+    }
+
+    var pendingDrainCount: Int {
+        self.drainWaiters.count
+    }
 
     @discardableResult
     func schedule(
@@ -493,6 +506,9 @@ nonisolated enum ASRHardwareListenerPolicy {
 /// Models are cached locally to avoid repeated downloads.
 @MainActor
 final class ASRService: ObservableObject {
+    #if DEBUG
+    var initialMenuBarStateDeliveredForTests = false
+    #endif
     // Below this the Transcribing status only adds a main-thread overlay re-render
     // that delays the result it is announcing; final ASR on short audio is ~40 ms.
     private static let finalTranscriptionStatusDelayNanoseconds: UInt64 = 250_000_000
@@ -931,8 +947,10 @@ final class ASRService: ObservableObject {
     private var isPronunciationTrainingStart = false
     private var pronunciationTrainingStartGeneration: String?
     private var isPronunciationTrainingStartCurrent: Bool {
-        !self.isPronunciationTrainingStart || (DictionaryMatcherExperiment.sharedFeaturesEnabled &&
-            self.pronunciationTrainingStartGeneration == DictionaryMatcherExperiment.generation)
+        !self.isPronunciationTrainingStart || (
+            DictionaryMatcherExperiment.sharedFeaturesEnabled &&
+                self.pronunciationTrainingStartGeneration == DictionaryMatcherExperiment.generation
+        )
     }
 
     private var pendingAudioCaptureBackendStart: Task<Void, Error>?
@@ -2099,8 +2117,8 @@ final class ASRService: ObservableObject {
     }
     #endif
 
-    // Thread-safe buffer to prevent "Array mutation while enumerating" and memory corruption crashes
-    // during long sessions where reallocation occurs frequently.
+    /// Thread-safe buffer to prevent "Array mutation while enumerating" and memory corruption crashes
+    /// during long sessions where reallocation occurs frequently.
     private let audioBuffer = ThreadSafeAudioBuffer()
     // Transient, read-only audio for a focused dictionary test. No history setting or disk write.
     private let dictionaryTestAudioSubject = PassthroughSubject<[Float], Never>()
@@ -2111,6 +2129,8 @@ final class ASRService: ObservableObject {
     private var lastCompletedAudioSnapshot: DictationAudioSnapshot?
     private var lastDictionaryLearningRecording: DictionaryLearningRecording?
     private var dictionaryLearningExpiryTask: Task<Void, Never>?
+    private var lastCorrectionRecording: DictionaryCorrectionRecording?
+    private var correctionRecordingExpiryTask: Task<Void, Never>?
 
     // Streaming transcription state (no VAD)
     private let streamingTaskLifecycle = StreamingTaskLifecycle()
@@ -2163,6 +2183,24 @@ final class ASRService: ObservableObject {
             self.lastDictionaryLearningRecording = nil
             self.dictionaryLearningExpiryTask = nil
         }
+    }
+
+    private func retainCorrectionRecording(_ recording: DictionaryCorrectionRecording?) {
+        self.correctionRecordingExpiryTask?.cancel()
+        self.correctionRecordingExpiryTask = nil
+        self.lastCorrectionRecording = recording
+        guard let id = recording?.id else { return }
+        self.correctionRecordingExpiryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(DictionaryCorrectionRecording.lifetime))
+            guard !Task.isCancelled, let self, self.lastCorrectionRecording?.id == id else { return }
+            self.lastCorrectionRecording = nil
+            self.correctionRecordingExpiryTask = nil
+        }
+    }
+
+    func consumeCorrectionRecording() -> DictionaryCorrectionRecording? {
+        defer { self.retainCorrectionRecording(nil) }
+        return self.lastCorrectionRecording
     }
 
     func originalAudioEnrollment(_ evidence: DictionaryLearningAudioEvidence) async throws -> PronunciationEnrollmentCapture {
@@ -2845,6 +2883,7 @@ final class ASRService: ObservableObject {
             return .failed
         }
         self.retainDictionaryLearningRecording(nil)
+        self.retainCorrectionRecording(nil)
         self.audioCaptureStartGeneration &+= 1
         let startGeneration = self.audioCaptureStartGeneration
         self.isStarting = true
@@ -3452,7 +3491,9 @@ final class ASRService: ObservableObject {
     }
 
     /// Identifies the protected dictionary capture so a dismissed test cannot stop a newer recording.
-    var dictionaryCaptureToken: Int? { self.isDictionaryTrainingCaptureActive ? self.benchmarkSessionID : nil }
+    var dictionaryCaptureToken: Int? {
+        self.isDictionaryTrainingCaptureActive ? self.benchmarkSessionID : nil
+    }
 
     /// Stops the recording session and returns the transcribed text.
     ///
@@ -3494,7 +3535,8 @@ final class ASRService: ObservableObject {
         onFinalTranscriptionStarted: (@MainActor () -> Void)? = nil,
         forDictionaryTraining: Bool = false,
         captureDictionaryPronunciation: Bool? = nil,
-        forDictionaryTesting: Bool = false
+        forDictionaryTesting: Bool = false,
+        onInitialDictionaryReplacement: (@MainActor (DictionaryReplacementRule) -> Void)? = nil
     ) async -> String {
         guard !forDictionaryTesting || self.isDictionaryTrainingCaptureActive else { return "" }
         DebugLogger.shared.info("🛑 STOP() called - beginning shutdown sequence", source: "ASRService")
@@ -3507,6 +3549,7 @@ final class ASRService: ObservableObject {
         }
         self.lastCompletedAudioSnapshot = nil
         self.retainDictionaryLearningRecording(nil)
+        self.retainCorrectionRecording(nil)
         let stopStartedAt = Date().timeIntervalSince1970
         let traceStartedAt = ProcessInfo.processInfo.systemUptime
         var tracePreviousAt = traceStartedAt
@@ -3868,10 +3911,18 @@ final class ASRService: ObservableObject {
                 ))
             }
 
+            if !isolatedDictionaryCapture, SettingsStore.shared.automaticDictionaryLearningEnabled {
+                self.retainCorrectionRecording(DictionaryCorrectionRecording(
+                    model: result.dictionaryLearningAlignment?.modelKey ?? provider.name,
+                    rawTranscript: result.text,
+                    samples: capturedPCM
+                ))
+            }
+
             let textWithoutFillers = ASRService.removeFillerWords(result.text)
             let dictionaryText = useDictionaryTrainingPath
                 ? textWithoutFillers
-                : ASRService.applyCustomDictionary(textWithoutFillers)
+                : ASRService.applyCustomDictionary(textWithoutFillers, onInitialReplacement: onInitialDictionaryReplacement)
             let outputText = useDictionaryTrainingPath
                 ? dictionaryText
                 : ASRService.applySpokenPunctuationFormatting(dictionaryText)
@@ -7484,6 +7535,7 @@ final class ASRService: ObservableObject {
         toggleStopRequestedAt: TimeInterval? = nil,
         tracksDictionaryCorrections: Bool = false,
         postInsertionKey: SettingsStore.SpokenSendKey? = nil,
+        beforePostInsertionAction: (@MainActor () async -> Void)? = nil,
         waitsForModifierRelease: Bool = true,
         requiredFocusTarget: TypingService.CapturedFocusTarget? = nil,
         preserveTranscriptOnClipboard: Bool = false,
@@ -7505,6 +7557,7 @@ final class ASRService: ObservableObject {
                 toggleStopRequestedAt: toggleStopRequestedAt,
                 tracksDictionaryCorrections: tracksDictionaryCorrections,
                 postInsertionKey: postInsertionKey,
+                beforePostInsertionAction: beforePostInsertionAction,
                 waitsForModifierRelease: waitsForModifierRelease,
                 requiredFocusTarget: requiredFocusTarget,
                 preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
@@ -7544,13 +7597,7 @@ final class ASRService: ObservableObject {
     /// Cache for compiled custom dictionary regexes.
     /// Key: trigger word, Value: (compiled regex, escaped replacement template)
     /// Cleared when dictionary entries change.
-    private struct CachedDictionaryPattern {
-        let entryID: UUID
-        let trigger: String
-        let regex: NSRegularExpression
-        let template: String
-        let canonical: NSRegularExpression?
-    }
+    private typealias CachedDictionaryPattern = DictionaryReplacementRule
 
     private static var cachedDictionaryPatterns: [CachedDictionaryPattern] = []
     private static var cachedBuiltInDictionaryPatterns: [CachedDictionaryPattern] = []
@@ -7561,58 +7608,18 @@ final class ASRService: ObservableObject {
     /// Called lazily on first apply after settings change.
     private static func rebuildDictionaryCache() {
         let userEntries = SettingsStore.shared.customDictionaryEntries
-        self.cachedDictionaryPatterns = self.dictionaryPatterns(for: userEntries)
-        self.cachedBuiltInDictionaryPatterns = self.dictionaryPatterns(for: BuiltInDictionary.entries(excludingSpellingsIn: userEntries))
+        self.cachedDictionaryPatterns = DictionaryReplacementRule.compile(for: userEntries)
+        self.cachedBuiltInDictionaryPatterns = DictionaryReplacementRule.compile(for: BuiltInDictionary.entries(excludingSpellingsIn: userEntries))
         self.cachedUserDictionaryProtections = self.cachedDictionaryPatterns.map(\.regex)
-        var protectedPatterns = Set(self.cachedUserDictionaryProtections.map(\.pattern))
+        var protectedPatterns = Set(self.cachedUserDictionaryProtections.map { "\($0.options.rawValue):\($0.pattern)" })
         for entry in userEntries where !entry.replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let pattern = self.dictionaryPattern(for: entry.replacement)
-            guard protectedPatterns.insert(pattern).inserted,
-                  let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { continue }
+            let pattern = DictionaryReplacementRule.pattern(for: entry.replacement)
+            let options: NSRegularExpression.Options = entry.caseSensitive ? [] : .caseInsensitive
+            guard protectedPatterns.insert("\(options.rawValue):\(pattern)").inserted,
+                  let regex = try? NSRegularExpression(pattern: pattern, options: options) else { continue }
             self.cachedUserDictionaryProtections.append(regex)
         }
         self.dictionaryCacheNeedsRebuild = false
-    }
-
-    private static func dictionaryPatterns(for entries: [SettingsStore.CustomDictionaryEntry]) -> [CachedDictionaryPattern] {
-        var patterns: [CachedDictionaryPattern] = []
-
-        for entry in entries {
-            var canonical: NSRegularExpression?
-            let replacementRange = NSRange(entry.replacement.startIndex..., in: entry.replacement)
-            for trigger in entry.triggers {
-                guard !trigger.isEmpty else { continue }
-
-                let consumesHorizontalSeparators = !entry.replacement.isEmpty &&
-                    entry.replacement.allSatisfy(\.isWhitespace)
-                let escapedTrigger = self.dictionaryPattern(
-                    for: trigger,
-                    consumesHorizontalSeparators: consumesHorizontalSeparators
-                )
-                guard let regex = try? NSRegularExpression(
-                    pattern: escapedTrigger,
-                    options: .caseInsensitive
-                ) else { continue }
-
-                let needsProtection = regex.matches(in: entry.replacement, range: replacementRange).contains {
-                    $0.range.length < replacementRange.length
-                }
-                if needsProtection, canonical == nil {
-                    canonical = try? NSRegularExpression(pattern: self.dictionaryPattern(for: entry.replacement), options: .caseInsensitive)
-                }
-                patterns.append(CachedDictionaryPattern(
-                    entryID: entry.id,
-                    trigger: trigger,
-                    regex: regex,
-                    template: NSRegularExpression.escapedTemplate(for: entry.replacement),
-                    canonical: needsProtection ? canonical : nil
-                ))
-            }
-        }
-
-        return patterns.sorted {
-            $0.regex.pattern.utf16.count > $1.regex.pattern.utf16.count
-        }
     }
 
     /// Apply defaults only outside user-defined phrases and completed user replacements.
@@ -7657,31 +7664,6 @@ final class ASRService: ObservableObject {
         return output as String
     }
 
-    private static func dictionaryPattern(
-        for trigger: String,
-        consumesHorizontalSeparators: Bool = false
-    ) -> String {
-        let escapedTrigger = NSRegularExpression.escapedPattern(for: trigger)
-        let prefix = self.startsWithWordCharacter(trigger) ? "\\b" : ""
-        let suffix = self.endsWithWordCharacter(trigger) ? "\\b" : ""
-        let separator = consumesHorizontalSeparators ? "[ \\t]*" : ""
-        return separator + prefix + escapedTrigger + suffix + separator
-    }
-
-    private static func startsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.first else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func endsWithWordCharacter(_ text: String) -> Bool {
-        guard let scalar = text.unicodeScalars.last else { return false }
-        return self.isWordCharacter(scalar)
-    }
-
-    private static func isWordCharacter(_ scalar: Unicode.Scalar) -> Bool {
-        CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
-    }
-
     /// Invalidates the dictionary cache. Called when settings change.
     static func invalidateDictionaryCache() {
         self.dictionaryCacheNeedsRebuild = true
@@ -7689,9 +7671,9 @@ final class ASRService: ObservableObject {
 
     /// Applies custom dictionary replacements to transcribed text.
     /// Replaces trigger words/phrases with their designated replacements.
-    /// Uses case-insensitive matching with word boundaries.
+    /// Uses each entry’s matching mode with word boundaries.
     /// Optimized: caches compiled regexes to avoid per-call compilation overhead.
-    static func applyCustomDictionary(_ text: String) -> String {
+    static func applyCustomDictionary(_ text: String, onInitialReplacement: (@MainActor (DictionaryReplacementRule) -> Void)? = nil) -> String {
         // Built-in spellings always exist, so the compiled patterns decide whether there is work.
 
         // Rebuild cache if needed (lazy initialization)
@@ -7723,6 +7705,13 @@ final class ASRService: ObservableObject {
         // default's corrected spelling can also follow the user's chosen replacement.
         result = self.applyBuiltInDictionary(to: result, onReplacement: recordReplacement)
         for pattern in self.cachedDictionaryPatterns {
+            if let onInitialReplacement, pattern.formattingOutputRegex != nil,
+               let firstLetter = result.firstIndex(where: { $0.isLetter }),
+               let match = pattern.regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)),
+               NSLocationInRange(NSRange(result.startIndex..<firstLetter, in: result).length, match.range)
+            {
+                onInitialReplacement(pattern)
+            }
             result = DictionaryReplacementProtection.replacingMatches(
                 in: result,
                 regex: pattern.regex,
@@ -7742,6 +7731,27 @@ final class ASRService: ObservableObject {
         }
 
         return result
+    }
+
+    /// Freeze explicit case/punctuation preferences before cleanup; content-changing rules run only once.
+    static func caseSensitiveDictionaryRules() -> [DictionaryReplacementRule] {
+        if self.dictionaryCacheNeedsRebuild { self.rebuildDictionaryCache() }
+        return self.cachedDictionaryPatterns.filter { !$0.regex.options.contains(.caseInsensitive) && $0.changesOnlyFormatting }
+    }
+
+    /// Restore explicit case/punctuation preferences after AI cleanup without replaying word substitutions.
+    static func applyCaseSensitiveDictionary(_ text: String) -> String {
+        self.applyCaseSensitiveDictionary(text, rules: self.caseSensitiveDictionaryRules())
+    }
+
+    static func applyCaseSensitiveDictionary(_ text: String, rules: [DictionaryReplacementRule], initialRule: DictionaryReplacementRule? = nil) -> String {
+        var result = text
+        for pattern in rules {
+            result = DictionaryReplacementProtection.replacingMatches(
+                in: result, regex: pattern.regex, template: pattern.template, canonical: pattern.canonical
+            )
+        }
+        return initialRule?.restoringInitialOutput(in: result) ?? result
     }
 
     // MARK: - GAAV Mode Formatting
@@ -8081,7 +8091,9 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
     }
 
     #if DEBUG
-    var isRecordingEnabledForTesting: Bool { self.lock.withLock { self.recordingEnabled } }
+    var isRecordingEnabledForTesting: Bool {
+        self.lock.withLock { self.recordingEnabled }
+    }
     #endif
 
     func setLevelMonitoringEnabled(_ enabled: Bool) {
