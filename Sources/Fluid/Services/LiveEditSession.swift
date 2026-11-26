@@ -120,7 +120,12 @@ final class LiveEditSession: ObservableObject {
         self.appendAtEnd(text)
     }
 
-    /// Hold to Capture Screenshot: the screenshot goes after the newest words, like the Paste Image button.
+    /// Local API: text another app sends goes after the newest words, like ⇧⌘V.
+    func appendText(_ text: String) {
+        self.appendAtEnd(text)
+    }
+
+    /// Hold to Capture Screenshot and the local API: the image goes after the newest words, like the Paste Image button.
     func appendScreenshot(at path: String) {
         self.appendAtEnd(self.placeholders(forImagesAt: [path]))
     }

@@ -34,6 +34,7 @@ nonisolated struct LocalAPIRouter: HTTPResponder {
             (.post, "/v1/dictionary/custom-words", dictionary),
             (.post, "/v1/transcribe", inference),
             (.post, "/v1/postprocess", inference),
+            (.post, "/v1/dictation/insert", DictationInsertAPIController()),
         ]
 
         let router = Router(context: Context.self)
