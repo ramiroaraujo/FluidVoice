@@ -309,6 +309,10 @@ struct ContentView: View {
     @State private var hotkeyManager: GlobalHotkeyManager? = nil
     @State private var hotkeyManagerInitialized: Bool = false
     @State private var processingDictationLifecycleID: UInt64?
+    /// The processing dictation that only waits on AI cleanup; a new recording may start over it.
+    @State private var backgroundableDictationLifecycleID: UInt64?
+    /// Finishes when the latest stopped dictation has delivered, so outputs land in spoken order.
+    @State private var dictationDeliveryTail: Task<Void, Never>?
     @State private var pendingVoiceCommandLifecycleID: UInt64?
     @State private var cancelledOutputLifecycleID: UInt64?
 
@@ -2476,7 +2480,8 @@ struct ContentView: View {
         preserveTranscriptOnClipboard: Bool,
         stopSnapshot: DictationStopSnapshot? = nil,
         waitsForModifierRelease: Bool = true,
-        isOutputValid: @escaping @MainActor () -> Bool = { true }
+        isOutputValid: @escaping @MainActor () -> Bool = { true },
+        isOverlayCurrent: @MainActor () -> Bool = { true }
     ) async -> TypingService.DeliveryOutcome {
         let sendsExistingDraft = outputPlan.plainText.isEmpty
         let outcome = await self.asr.typeOutputPlanToActiveFieldAndWait(
@@ -2490,7 +2495,7 @@ struct ContentView: View {
             preserveTranscriptOnClipboard: preserveTranscriptOnClipboard,
             isOutputValid: isOutputValid
         )
-        guard isOutputValid() else { return outcome }
+        guard isOutputValid(), isOverlayCurrent() else { return outcome }
         if outcome.didDispatchAction {
             NotchContentState.shared.setSpokenSendIndicatorState(.sent)
             try? await Task.sleep(nanoseconds: 350_000_000)
@@ -3392,6 +3397,19 @@ struct ContentView: View {
             return
         }
 
+        // From here the stop only waits on AI cleanup and delivery, so the next recording may start.
+        // ponytail: an AI call that never returns holds every later delivery; add a timeout if that shows up.
+        let previousDelivery = route == .normal ? self.dictationDeliveryTail : nil
+        var finishDelivery: AsyncStream<Void>.Continuation?
+        defer { finishDelivery?.finish() }
+        if route == .normal {
+            let (delivered, continuation) = AsyncStream<Void>.makeStream()
+            finishDelivery = continuation
+            self.dictationDeliveryTail = Task { for await _ in delivered {} }
+            self.backgroundableDictationLifecycleID = expectedOverlayLifecycleID
+            self.hotkeyManager?.releaseStopLock()
+        }
+
         var finalText: String
         var aiFallbackReason: String?
         var postProcessingModel: String?
@@ -3494,6 +3512,9 @@ struct ContentView: View {
         } else {
             finalText = normalizedTranscribedText
         }
+        // An earlier dictation still in AI cleanup delivers first.
+        await previousDelivery?.value
+        let isOverlayCurrent: @MainActor () -> Bool = { self.overlayLifecycleID == expectedOverlayLifecycleID }
 
         // Normalize literal command and mention syntax after AI cleanup and before final user preferences.
         finalText = ASRService.applyDictationLiteralFormatting(
@@ -3514,7 +3535,7 @@ struct ContentView: View {
             bundleID: appInfo.bundleId,
             windowTitle: appInfo.windowTitle
         )
-        self.recordingPrecedingText = ""
+        if isOverlayCurrent() { self.recordingPrecedingText = "" }
         let outputRoute: DictationOutputRoute = route == .normal && self.cancelledOutputLifecycleID == expectedOverlayLifecycleID ? .historyOnly : route
         if outputRoute == .historyOnly, sendsExistingDraft {
             // Keep the spoken words recoverable when Escape cancels a send-only draft.
@@ -3680,7 +3701,7 @@ struct ContentView: View {
                 return
             }
 
-            if spokenSendAllowed {
+            if spokenSendAllowed, isOverlayCurrent() {
                 NotchContentState.shared.setSpokenSendIndicatorState(.sending)
                 NotchOverlayManager.shared.updateTranscriptionText("Sending")
             }
@@ -3700,7 +3721,8 @@ struct ContentView: View {
                     preserveTranscriptOnClipboard: shouldCopyToClipboard,
                     stopSnapshot: stopSnapshot,
                     waitsForModifierRelease: !holdToSendRequested,
-                    isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
+                    isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID },
+                    isOverlayCurrent: isOverlayCurrent
                 )
                 self.logPipelineCompletion(
                     outcome: deliveryOutcome.pipelineLogOutcome,
@@ -3737,7 +3759,12 @@ struct ContentView: View {
             }
 
             guard self.overlayLifecycleID == expectedOverlayLifecycleID, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID else {
-                if self.cancelledOutputLifecycleID == expectedOverlayLifecycleID { saveCancelledSendOnlyHistory() }
+                if self.cancelledOutputLifecycleID == expectedOverlayLifecycleID {
+                    saveCancelledSendOnlyHistory()
+                } else if shouldShowAIProcessingFailure, let aiFallbackNotificationError {
+                    // The overlay belongs to a newer recording; the raw text was still delivered.
+                    NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
+                }
                 self.appBench("delivery_ui_skipped reason=stale_recording")
                 return
             }
@@ -3782,14 +3809,16 @@ struct ContentView: View {
         // compete with it on the main actor. Sandbox runs never present either.
         if shouldShowAIProcessingFailure {
             self.pendingAIReprocessText = spokenSendParse.shouldSend ? normalizedTranscribedText : transcribedText
-            NotchContentState.shared.showAIProcessingFailure()
-            self.menuBarManager.finishProcessingKeepingOverlayVisible()
+            if isOverlayCurrent() {
+                NotchContentState.shared.showAIProcessingFailure()
+                self.menuBarManager.finishProcessingKeepingOverlayVisible()
+            }
             if let aiFallbackNotificationError {
                 NotificationService.showAIProcessingFallback(error: aiFallbackNotificationError)
             }
         }
 
-        if !didTypeExternally, !shouldShowAIProcessingFailure, !didFailTextDelivery, !stopOverlay.didRequestHide {
+        if isOverlayCurrent(), !didTypeExternally, !shouldShowAIProcessingFailure, !didFailTextDelivery, !stopOverlay.didRequestHide {
             self.hideOverlayAfterOutput()
         }
         if !shouldTypeExternally {
@@ -4065,6 +4094,16 @@ struct ContentView: View {
     }
 
     private func advanceOverlayLifecycle() {
+        if let processing = self.processingDictationLifecycleID, processing == self.backgroundableDictationLifecycleID {
+            // The new recording takes the overlay; the earlier dictation finishes and delivers in the background.
+            self.processingDictationLifecycleID = nil
+            self.menuBarManager.beginProcessingCompletionAndHideOverlay()
+            // The hide's own cleanup is skipped once the new overlay replaces it, so reset the processing UI here.
+            NotchOverlayManager.shared.setProcessing(false)
+            NotchOverlayManager.shared.updateTranscriptionText("")
+            NotchContentState.shared.setSpokenSendIndicatorState(.hidden)
+            DebugLogger.shared.info("Dictation \(processing) continues in the background for a new recording", source: "ContentView")
+        }
         self.cancelDictationContextCapture()
         self.spokenSendAutoStopTask?.cancel()
         self.spokenSendAutoStopTask = nil
@@ -4892,7 +4931,7 @@ struct ContentView: View {
 
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
     private func startRecording() -> Task<Void, Never>? {
-        guard self.processingDictationLifecycleID == nil else { return nil }
+        guard !self.processingDictationBlocksNewRecording else { return nil }
         // Browsing the demo must not send dictation to a previously focused app.
         guard !self.showsFluidIntelligenceDemo || (DictationPromptTestCoordinator.shared.isActive && !DictationPromptTestCoordinator.shared.isProcessing) else { return nil }
         guard !self.presentExclusiveActivityBlockIfNeeded() else { return nil }
@@ -5670,8 +5709,12 @@ extension ContentView {
         { self.asr.showError = false }
     }
 
+    private var processingDictationBlocksNewRecording: Bool {
+        self.processingDictationLifecycleID != nil && self.processingDictationLifecycleID != self.backgroundableDictationLifecycleID
+    }
+
     private func canBeginDictationRecording() -> Bool {
-        guard self.processingDictationLifecycleID == nil else { return false }
+        guard !self.processingDictationBlocksNewRecording else { return false }
         if self.canSwitchActiveDictationCaptureMode {
             self.clearOwnCaptureBlockErrorIfNeeded()
             return true

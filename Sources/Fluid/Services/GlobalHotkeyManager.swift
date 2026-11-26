@@ -519,7 +519,10 @@ final class GlobalHotkeyManager: NSObject {
     }
 
     /// Busy flag to prevent race conditions during stop processing
-    private var isProcessingStop = false
+    private var stopLockedAt: TimeInterval?
+    private var isProcessingStop: Bool { self.stopLockedAt != nil }
+    /// A toggle press made while final transcription holds the stop lock; it runs once the lock is released.
+    private var startPendingStopLock: (@MainActor () -> Void)?
 
     private var isInitialized = false
     private var initializationTask: Task<Void, Never>?
@@ -2574,7 +2577,15 @@ private extension GlobalHotkeyManager {
 
     /// Keep rapid taps in order through the actual asynchronous capture start/stop.
     func queueRecordingAction(for type: HotkeyHoldModeType, shortcut: HotkeyShortcut?, selection: SettingsStore.DictationPromptSelection? = nil, action: @escaping @MainActor () async -> Void) {
-        guard self.canTriggerRecordingAction(self.label(for: type)) else { return }
+        guard self.canTriggerRecordingAction(self.label(for: type)) else {
+            // Hold mode is left out: its release could arrive before the queued start.
+            if self.isProcessingStop, self.hotkeyMode != .hold {
+                self.startPendingStopLock = { [weak self] in
+                    self?.queueRecordingAction(for: type, shortcut: shortcut, selection: selection, action: action)
+                }
+            }
+            return
+        }
         let revision = self.recordingActionRevisions[type, default: 0]
         let previous = self.pendingRecordingActions[type]
         self.pendingRecordingActionCounts[type, default: 0] += 1
@@ -2709,12 +2720,25 @@ private extension GlobalHotkeyManager {
 extension GlobalHotkeyManager {
     func traceStopLocked() -> TimeInterval {
         OverlayCloseRunLoopProbe.begin()
-        self.isProcessingStop = true
-        return ProcessInfo.processInfo.systemUptime
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        self.stopLockedAt = startedAt
+        return startedAt
+    }
+
+    /// The stopped dictation only waits on AI cleanup now, so the shortcut may start the next recording.
+    func releaseStopLock() {
+        self.stopLockedAt = nil
+        let pendingStart = self.startPendingStopLock
+        self.startPendingStopLock = nil
+        pendingStart?()
     }
 
     func traceStopUnlocked(since startedAt: TimeInterval) {
-        self.isProcessingStop = false
+        // A later stop may hold the lock by the time a backgrounded pipeline returns.
+        if self.stopLockedAt == startedAt {
+            self.stopLockedAt = nil
+            self.startPendingStopLock = nil
+        }
         DebugLogger.shared.debug(
             "CLOSE_DETAIL shortcutUnlocked uptime=\(ProcessInfo.processInfo.systemUptime) heldMs=\((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)",
             source: "StopTiming"
