@@ -1,5 +1,6 @@
 import AppKit
 
+/// GET /v1/dictation/status says whether a dictation is recording.
 /// POST /v1/dictation/insert: another app adds text or an image after the newest words of the dictation
 /// being recorded, the way ⇧⌘V adds the clipboard. Images go in as file paths.
 /// The body is JSON with any of `text`, `imagePath` and `imageBase64`, or raw image bytes with an image/* Content-Type.
@@ -15,7 +16,19 @@ struct DictationInsertAPIController: LocalAPIRouteHandler {
         let imagePath: String?
     }
 
+    struct StatusResponse: Encodable {
+        /// True while a dictation is recording, which is when an insert is accepted.
+        let recording: Bool
+    }
+
+    private var isRecording: Bool {
+        let content = NotchContentState.shared
+        return AppServices.shared.asr.isRunning && content.mode == .dictation && !content.isProcessing
+    }
+
     func handle(_ request: LocalAPI.Request) async -> LocalAPI.Response {
+        // GET /v1/dictation/status
+        if request.method == "GET" { return LocalAPI.json(StatusResponse(recording: self.isRecording)) }
         var text: String?
         var imagePath: String?
         var imageData: Data?
@@ -47,8 +60,7 @@ struct DictationInsertAPIController: LocalAPIRouteHandler {
             guard png != nil else { return LocalAPI.error("The image could not be read.", status: 400) }
         }
 
-        let content = NotchContentState.shared
-        guard AppServices.shared.asr.isRunning, content.mode == .dictation, !content.isProcessing else {
+        guard self.isRecording else {
             return LocalAPI.error("No dictation is recording.", status: 409)
         }
         if let png {
